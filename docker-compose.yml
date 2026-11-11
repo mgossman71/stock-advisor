@@ -1,0 +1,67 @@
+# Local stack for stock-advisor.
+#
+#   docker compose up -d --build      # build + serve on http://localhost:8000
+#   docker compose run --rm ingest    # fetch 1y of AAPL into the same volume
+#   docker compose logs -f app
+#
+# This file must live in the project directory: `docker compose` searches the
+# current directory and then walks up the parents, and there is an unrelated
+# stale docker-compose.yml in the home directory that will otherwise be picked
+# up (it builds ./server and ./client, which no longer exist).
+#
+# `version:` is intentionally absent - Compose v2 ignores it and warns.
+
+name: stock-advisor
+
+x-app: &app
+  build: .
+  image: stock-advisor:latest
+  environment:
+    # Absolute path into the named volume below.
+    DATABASE_URL: sqlite:////data/stock_advisor.db
+    # "auto" = yfinance -> nasdaq -> fred. Pin one (yfinance|nasdaq|fred) to debug fallbacks.
+    MARKET_DATA_PROVIDER: ${MARKET_DATA_PROVIDER:-auto}
+    DEBUG: ${DEBUG:-false}
+  volumes:
+    # Named volume, not a ./data bind mount: SQLite locking over Docker Desktop
+    # bind mounts on macOS is unreliable, and a bind mount would also collide
+    # with the seed CSV baked into the image at /app/data.
+    - stock_advisor_data:/data
+
+services:
+  app:
+    <<: *app
+    ports:
+      - "8000:8000"
+    init: true
+    restart: unless-stopped
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=3)",
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+  # One-shot ingestion, not started by `up` (profile keeps it out of the default run).
+  # Override the command for other symbols:
+  #   docker compose run --rm ingest python -m app.cli fetch MSFT --period 1y
+  #   docker compose run --rm ingest python -m app.cli fetch-universe --size 60
+  #   docker compose run --rm ingest python -m app.cli stats
+  ingest:
+    <<: *app
+    profiles: ["data"]
+    # Migrations run in the entrypoint, so `up` is not required first; but keep
+    # the ordering so two containers never migrate the same volume at once.
+    depends_on:
+      app:
+        condition: service_started
+    command: ["python", "-m", "app.cli", "fetch", "AAPL", "--period", "1y"]
+
+volumes:
+  stock_advisor_data:

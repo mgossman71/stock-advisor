@@ -1,0 +1,25 @@
+# Keep the build context small and, above all, keep host state out of the image.
+.venv/
+.git/
+.gitignore
+.pytest_cache/
+.ruff_cache/
+__pycache__/
+*.py[cod]
+.vscode/
+logs/
+
+# Secrets, and worse than secrets: a host .env would override the container's
+# DATABASE_URL with a path like sqlite:///./data/stock_advisor.db, putting the
+# database on the container layer instead of the volume.
+.env
+
+# The database itself is never baked in; only the seed CSV under data/ is copied.
+data/*.db
+data/*.db-wal
+data/*.shm
+Dockerfile
+docker-compose.yml
+README*.md
+CLAUDE.md
+stock-advisor-agent-prompt.md

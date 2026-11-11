@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{{ app }} — status</title>
+    <style>
+      :root { color-scheme: light dark; }
+      body { font: 15px/1.5 ui-sans-serif, system-ui, sans-serif; margin: 2rem auto; max-width: 52rem; padding: 0 1rem; }
+      h1 { font-size: 1.35rem; margin-bottom: .25rem; }
+      .muted { opacity: .7; }
+      table { border-collapse: collapse; width: 100%; margin: .75rem 0 1.5rem; }
+      th, td { text-align: left; padding: .35rem .5rem; border-bottom: 1px solid rgba(128,128,128,.25); }
+      td.num { text-align: right; font-variant-numeric: tabular-nums; }
+      code { font-family: ui-monospace, monospace; }
+      .note { border-left: 3px solid rgba(128,128,128,.5); padding: .5rem .75rem; margin: 1rem 0; }
+    </style>
+  </head>
+  <body>
+    <h1>{{ app }}</h1>
+    <p class="muted">
+      Data layer only (Phase 1). Portfolio screens, scoring and charts arrive in
+      Phases 2&ndash;6. Generated {{ generated_at }}.
+    </p>
+
+    <div class="note">
+      Database <code>{{ database }}</code> &middot; {{ tables }} tables &middot;
+      providers <code>{{ provider_chain | join(" &rarr; ") }}</code>
+      (MARKET_DATA_PROVIDER=<code>{{ market_data_provider }}</code>) &middot;
+      benchmark <code>{{ benchmark }}</code>
+    </div>
+
+    <h2>Rows</h2>
+    <table>
+      <tbody>
+        {% for name, count in counts.items() %}
+        <tr><td>{{ name }}</td><td class="num">{{ count }}</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+
+    <h2>Coverage</h2>
+    {% if coverage %}
+    <table>
+      <thead>
+        <tr>
+          <th>symbol</th><th class="num">bars</th><th>first</th><th>last</th>
+          <th class="num">fundamentals</th><th class="num">news</th>
+          <th class="num">analyst</th><th class="num">earnings</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in coverage %}
+        <tr>
+          <td>{{ row.symbol }}</td>
+          <td class="num">{{ row.bars }}</td>
+          <td>{{ row.first_date }}</td>
+          <td>{{ row.last_date }}</td>
+          <td class="num">{{ row.get("fundamentals", 0) }}</td>
+          <td class="num">{{ row.get("news", 0) }}</td>
+          <td class="num">{{ row.get("analyst_actions", 0) }}</td>
+          <td class="num">{{ row.get("earnings", 0) }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <p class="muted">
+      No price history yet. Fetch some:
+      <code>docker compose run --rm ingest</code>
+    </p>
+    {% endif %}
+
+    <h2>Recent provider calls</h2>
+    {% if fetch_log %}
+    <table>
+      <thead>
+        <tr><th>when</th><th>provider</th><th>endpoint</th><th>status</th><th class="num">rows</th><th>error</th></tr>
+      </thead>
+      <tbody>
+        {% for entry in fetch_log %}
+        <tr>
+          <td>{{ entry.fetched_at }}</td>
+          <td>{{ entry.provider }}</td>
+          <td><code>{{ entry.endpoint }}</code></td>
+          <td>{{ entry.status }}</td>
+          <td class="num">{{ entry.rows }}</td>
+          <td class="muted">{{ entry.error or "" }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <p class="muted">Nothing fetched yet.</p>
+    {% endif %}
+  </body>
+</html>

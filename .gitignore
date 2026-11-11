@@ -8,6 +8,7 @@ __pycache__/
 # Local database + generated artifacts (the seed CSV under data/ IS tracked)
 data/*.db
 data/*.db-wal
+data/*.db-shm
 data/*.shm
 logs/
 

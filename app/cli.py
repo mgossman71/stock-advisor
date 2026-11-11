@@ -17,11 +17,9 @@ from sqlalchemy import func, select
 
 from app.config import get_settings
 from app.db.base import dispose_all, session_scope
-from app.db.models import (
-    AnalystAction, DataFetchLog, EarningsEvent, Fundamentals, NewsItem,
-    PriceHistory, Ticker,
-)
+from app.db.models import Fundamentals, PriceHistory, Ticker
 from app.ingestion.ingest import refresh_symbol
+from app.ingestion.stats import coverage_by_ticker, recent_fetch_log, table_counts
 from app.ingestion.universe import load_universe, persist_universe
 from app.providers.registry import build_provider, provider_names
 
@@ -115,35 +113,21 @@ def cmd_fetch_universe(args: argparse.Namespace) -> int:
 
 def cmd_stats(_: argparse.Namespace) -> int:
     """Row counts per table, price coverage, and recent fetch-log entries."""
-    tables = {
-        "tickers": Ticker, "price_history": PriceHistory, "fundamentals": Fundamentals,
-        "news_items": NewsItem, "analyst_actions": AnalystAction,
-        "earnings_events": EarningsEvent, "data_fetch_log": DataFetchLog,
-    }
     with session_scope() as session:
         print("table row counts")
-        for name, model in tables.items():
-            print(f"  {name:18s} {session.scalar(select(func.count()).select_from(model))}")
+        for name, count in table_counts(session).items():
+            print(f"  {name:18s} {count}")
+
         print("\nprice coverage")
-        rows = session.execute(
-            select(
-                Ticker.symbol, func.count(PriceHistory.id),
-                func.min(PriceHistory.date), func.max(PriceHistory.date),
-            )
-            .join(PriceHistory, PriceHistory.ticker_id == Ticker.id)
-            .group_by(Ticker.symbol)
-            .order_by(Ticker.symbol)
-        ).all()
-        for symbol, count, low, high in rows:
-            print(f"  {symbol:7s} {count:5d} bars  {low} .. {high}")
+        for row in coverage_by_ticker(session):
+            print(f"  {row['symbol']:7s} {row['bars']:5d} bars  {row['first_date']} .. {row['last_date']}")
+
         print("\nlast 8 fetch-log entries")
-        for entry in session.scalars(
-            select(DataFetchLog).order_by(DataFetchLog.id.desc()).limit(8)
-        ):
+        for entry in recent_fetch_log(session, limit=8):
             print(
-                f"  {entry.fetched_at:%Y-%m-%d %H:%M:%S} {entry.provider:9s} "
-                f"{entry.endpoint:30s} {entry.status:13s} rows={entry.row_count} "
-                f"{entry.error or ''}"
+                f"  {entry['fetched_at']:%Y-%m-%d %H:%M:%S} {str(entry['provider']):9s} "
+                f"{str(entry['endpoint']):30s} {str(entry['status']):13s} rows={entry['rows']} "
+                f"{entry['error'] or ''}"
             )
     return 0
 
