@@ -19,6 +19,34 @@
   </div>
 </div>
 
+{% set llm = report.payload_json.llm %}
+{% set rules = report.payload_json.rules %}
+<div class="panels">
+  <div class="panel" style="grid-column: 1 / -1">
+    {% if llm %}
+    <h3>AI analysis <span class="muted">({{ llm.model }} · {{ report.created_at|as_of }})</span></h3>
+    <p>{{ report.summary }}</p>
+    {% set call = llm.recommendation %}
+    <p>Call: <b>{{ call.action }}</b>
+      {% if call.action != "none" %}· confidence {{ call.confidence or "unavailable" }}
+      · {{ call.horizon }} horizon
+      {% if call.target_price %}· target {{ call.target_price }}{% endif %}
+      {% if call.stop_price %}· stop {{ call.stop_price }}{% endif %}{% endif %}</p>
+    {% if call.rationale %}<p class="muted">{{ call.rationale }}</p>{% endif %}
+    {% for n in llm.notes %}<p class="muted">note: {{ n }}</p>{% endfor %}
+    {% if rules %}<p class="muted">Rules baseline: <span class="{{ rules.stance }}">{{ rules.stance }}</span>,
+      composite {{ rules.score }}/100.</p>{% endif %}
+    {% else %}
+    <h3>Rules engine <span class="muted">({{ report.model_or_rule_version }})</span></h3>
+    {% if report.payload_json.llm_error %}
+    <p class="neg">AI analysis failed, so this is the rules report: {{ report.payload_json.llm_error }}</p>
+    {% else %}
+    <p class="muted">No AI analyst configured — set one up under <a href="/settings">Settings</a>.</p>
+    {% endif %}
+    {% endif %}
+  </div>
+</div>
+
 <div class="panels">
   <div class="panel">
     <h3>Bull case</h3>
@@ -40,7 +68,7 @@
     {% endif %}
   </div>
   <div class="panel">
-    <h3>Sub-scores (weights: {{ report.payload_json.weights_used|tojson }})</h3>
+    <h3>Rules sub-scores (weights: {{ report.payload_json.weights_used|tojson }})</h3>
     <table>
       <tr><th>Block</th><th class="num">Score</th></tr>
       {% for s in report.payload_json.sub_scores %}
@@ -48,7 +76,7 @@
           <td class="num">{{ s.score if s.score is not none else "unavailable" }}</td></tr>
       {% endfor %}
     </table>
-    <p class="muted">Summary: {{ report.summary }}</p>
+    <p class="muted">Summary: {{ rules.summary if rules else report.summary }}</p>
   </div>
   <div class="panel" style="grid-column: 1 / -1">
     <h3>Evidence ({{ report.payload_json.evidence|length }} cited data points)</h3>

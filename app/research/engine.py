@@ -156,7 +156,8 @@ class RuleBasedAdvisor:
 
     def _make(self, session: Session, report: ResearchReport, direction: str,
               entry: Decimal, *, confidence: Decimal, stop: Decimal, target: Decimal,
-              rationale: str) -> Recommendation | None:
+              rationale: str, horizon: str = "medium",
+              engine_version: str | None = None) -> Recommendation | None:
         """Persist one recommendation unless an open call already exists."""
         open_existing = session.scalar(
             select(Recommendation).where(
@@ -171,7 +172,7 @@ class RuleBasedAdvisor:
             ticker_id=report.ticker_id,
             report_id=report.id,
             direction=direction,
-            horizon="medium",
+            horizon=horizon,
             generated_at=dt.datetime.now(dt.timezone.utc),
             entry_price_at_call=entry,
             stop_price=stop,
@@ -180,7 +181,7 @@ class RuleBasedAdvisor:
             confidence=confidence,
             rationale=rationale,
             evidence_json=(report.payload_json or {}).get("evidence", []),
-            engine_version=self.version,
+            engine_version=engine_version or self.version,
         )
         session.add(rec)
         session.flush()

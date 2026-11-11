@@ -4,6 +4,38 @@
 {% block content %}
 <h1>Settings</h1>
 <div class="panels">
+  <div class="panel" style="grid-column: 1 / -1">
+    <h2>AI analyst <span class="muted">(self-hosted LLM, any OpenAI-compatible server)</span>
+      {% if llm.ready %}<span class="pill bullish">on · {{ llm.model }}</span>
+      {% else %}<span class="pill neutral">off · rules engine</span>{% endif %}</h2>
+    <form method="post" action="/settings/llm" class="inline" id="llm-form">
+      <label><input type="checkbox" name="llm_enabled" value="1" {% if llm.enabled %}checked{% endif %}>
+        use the model for research</label>
+      <label>base URL <input name="llm_base_url" value="{{ llm.base_url }}" style="width:22rem"
+        placeholder="http://localhost:11434/v1"></label>
+      <label>model <input name="llm_model" value="{{ llm.model }}" style="width:14rem"
+        placeholder="qwen2.5:32b-instruct"></label>
+      <label>API key <input type="password" name="llm_api_key" value="" autocomplete="off" style="width:12rem"
+        placeholder="{% if llm.api_key %}set — blank keeps it{% else %}optional{% endif %}"></label>
+      {% if llm.api_key %}<label><input type="checkbox" name="llm_clear_api_key" value="1"> clear key</label>{% endif %}
+      <label>temperature <input name="llm_temperature" value="{{ llm.temperature }}" style="width:4rem"></label>
+      <label>max tokens <input name="llm_max_tokens" value="{{ llm.max_tokens }}" style="width:5rem"></label>
+      <label>timeout (s) <input name="llm_timeout_seconds" value="{{ llm.timeout_seconds }}" style="width:4rem"></label>
+      <label><input type="checkbox" name="llm_use_in_screen" value="1" {% if llm.use_in_screen %}checked{% endif %}>
+        also in the nightly screen</label>
+      <button class="btn" type="submit">Save</button>
+      <button class="btn secondary" type="button" hx-post="/settings/llm/test"
+        hx-include="#llm-form" hx-target="#llm-test">Test connection</button>
+    </form>
+    <div id="llm-test"></div>
+    <p class="muted">The model receives the stored data for a ticker (rules baseline, fundamentals,
+      1y price path, 30d news, 90d analyst actions, earnings) and returns stance, score, thesis and an
+      optional call. Entry prices always come from the database; implausible stops/targets fall back to
+      defaults; if the model is unreachable or replies badly, the rules engine is used and the report says so.
+      Ollama: <code>http://localhost:11434/v1</code> · LM Studio: <code>http://localhost:1234/v1</code> ·
+      from the Docker container use <code>host.docker.internal</code> instead of <code>localhost</code>.
+      The nightly screen makes one call per ticker; untick it if your hardware is slow.</p>
+  </div>
   <div class="panel">
     <h2>Scoring weights <span class="muted">(must sum to 1.0; used by every future report)</span></h2>
     <form method="post" action="/settings/weights" class="inline">

@@ -22,6 +22,11 @@ x-app: &app
     # "auto" = yfinance -> nasdaq -> fred. Pin one (yfinance|nasdaq|fred) to debug fallbacks.
     MARKET_DATA_PROVIDER: ${MARKET_DATA_PROVIDER:-auto}
     DEBUG: ${DEBUG:-false}
+  # Lets the container reach a self-hosted LLM on the host at
+  # http://host.docker.internal:<port> (built in on Docker Desktop; this
+  # line makes it work on Linux too).
+  extra_hosts:
+    - "host.docker.internal:host-gateway"
   volumes:
     # Named volume, not a ./data bind mount: SQLite locking over Docker Desktop
     # bind mounts on macOS is unreliable, and a bind mount would also collide

@@ -26,7 +26,7 @@ from app.ingestion.ingest import refresh_symbol
 from app.ingestion.stats import coverage_by_ticker, recent_fetch_log, table_counts
 from app.ingestion.universe import load_universe, persist_universe
 from app.providers.registry import build_provider, provider_names
-from app.research.engine import RuleBasedAdvisor
+from app.research.llm_advisor import advisor_for
 from app.trading.accounts import (
     CashAdjustmentError,
     adjust_cash,
@@ -326,7 +326,7 @@ def cmd_research(args: argparse.Namespace) -> int:
             provider = build_provider(settings)
             refresh_symbol(session, provider, args.symbol)
             session.commit()
-        advisor = RuleBasedAdvisor()
+        advisor = advisor_for(session)
         report = advisor.research(session, args.symbol)
         if report is None:
             print(f"no ticker {args.symbol.upper()} in DB - fetch first")
@@ -335,6 +335,8 @@ def cmd_research(args: argparse.Namespace) -> int:
         session.commit()
         print(f"{report.ticker.symbol} stance={report.overall_stance} "
               f"score={report.score} as_of={report.data_as_of} version={report.model_or_rule_version}")
+        if report.payload_json.get("llm_error"):
+            print(f"AI analysis failed, rules used: {report.payload_json['llm_error']}")
         print(f"summary: {report.summary}")
         for label, items in (("bull", report.payload_json["bull_points"]),
                              ("bear", report.payload_json["bear_points"]),

@@ -130,6 +130,39 @@ sane, bounded to +15 %…+50 % (longs) / −15 % (shorts). Confidence =
 50 + 1.25 × (score − 60) − 2 × missing-fields, clamped to 10–95. No stored
 price → no call.
 
+## AI analyst (self-hosted LLM)
+
+Settings → **AI analyst** points the app at any OpenAI-compatible server
+(`POST {base_url}/chat/completions`): Ollama `http://localhost:11434/v1`,
+LM Studio `http://localhost:1234/v1`, vLLM, llama.cpp `server`, LocalAI.
+From the Docker container use `host.docker.internal` instead of `localhost`.
+**Test connection** checks the values as typed, before you save them. Config
+lives in the `app_settings` table, so the web app, CLI and nightly job all
+use it. The API key is optional and never shown again after saving.
+
+With it on, `LLMAdvisor` (`app/research/llm_advisor.py`) handles the
+research button, `app.cli research`, and (unless unticked) the nightly
+screen:
+
+1. The rules report above is built first and becomes the model's baseline.
+2. The model gets a JSON dossier of *stored* data only: that baseline,
+   latest fundamentals (percent fields suffixed `_pct`), a monthly 1-year
+   price path, 30-day news, 90-day analyst actions, the last 4 earnings and
+   the next one. Nulls stay null.
+3. It replies with stance, 0–100 score, thesis, bull/bear/risk points and an
+   optional long/short call. That becomes the report's headline; the rules
+   view stays under `payload.rules` and shows as the "Rules baseline".
+
+Guards: the entry price is always the latest stored close, never a price
+the model wrote. Stops/targets on the wrong side of entry (or outside
+0.5×–3× entry) fall back to the rules defaults, and the rationale says so.
+No call is made when it contradicts the model's own stance or confidence is
+below 55. A bad reply or an unreachable server falls back to the rules
+report with `llm_error` shown on the page. After one transport failure the
+rest of a screen run skips the model, so a down server costs one timeout,
+not one per ticker. Calls are stamped `engine_version = llm:<model>`, so
+the scoreboard can tell the two engines apart.
+
 ## How the app grades its own advice
 
 Each recommendation gets a `recommendation_outcomes` row. For every window
@@ -154,7 +187,7 @@ pages — a call with an unfinished window is *not graded*, not "0".
 ## Tests
 
 ```
-make test   # 254 tests, <4s, no network
+make test   # 277 tests, <4s, no network
 ```
 
 Pinned invariants: P&L math (incl. shorts + borrow), scoring thresholds

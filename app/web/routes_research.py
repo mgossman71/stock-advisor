@@ -11,7 +11,7 @@ from app.db.base import session_scope
 from app.db.models import ResearchReport, Ticker
 from app.ingestion.ingest import refresh_symbol
 from app.providers.registry import build_provider
-from app.research.engine import RuleBasedAdvisor
+from app.research.llm_advisor import advisor_for
 from app.research.report import closes_with_dates
 from app.web.common import DISCLAIMER, _json_safe, templates
 
@@ -64,9 +64,9 @@ def research_report(request: Request, symbol: str):
 async def run_research(symbol: str, fetch: bool = Form(True)):
     """Full pipeline for one ticker: fetch -> score -> recommend (HTMX button)."""
     settings = get_settings()
-    advisor = RuleBasedAdvisor()
     saved_symbol: str | None = None
     with session_scope() as session:
+        advisor = advisor_for(session)
         if fetch:
             provider = build_provider(settings)
             try:

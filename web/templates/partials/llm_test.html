@@ -1,0 +1,10 @@
+{% if ok %}
+<p class="flash-ok">Connected.
+  {% if models %}{{ models|length }} model(s) served{% if model and model not in models %};
+  <span class="flash-bad">"{{ model }}" is not among them</span>{% endif %}.{% endif %}
+  {% if reply is not none %}Chat reply from {{ model }}: <span class="mono">{{ reply }}</span>{% endif %}</p>
+{% if models %}<p class="muted">Served: <span class="mono">{{ models|join(", ") }}</span></p>{% endif %}
+{% if models_error %}<p class="muted">Model list unavailable ({{ models_error }}); chat works.</p>{% endif %}
+{% else %}
+<p class="flash-bad">Failed: {{ error }}</p>
+{% endif %}

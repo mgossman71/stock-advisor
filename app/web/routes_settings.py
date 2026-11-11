@@ -1,4 +1,4 @@
-"""Settings page: scoring weights (live), alert defaults, read-only env config."""
+"""Settings page: AI analyst (LLM), scoring weights, alert defaults, read-only env."""
 
 from __future__ import annotations
 
@@ -11,6 +11,9 @@ from fastapi.responses import RedirectResponse
 from app.config import get_settings
 from app.db.base import session_scope
 from app.db.models import AppSetting, Order, ScoringWeight
+from app.research.llm import (
+    LLMClient, LLMError, config_from_form, load_llm_config, save_llm_config,
+)
 from app.research.scoring import DEFAULT_WEIGHTS, ensure_default_weights
 from app.web.common import DISCLAIMER, templates
 
@@ -27,11 +30,12 @@ def settings_page(request: Request):
         weights = session.query(ScoringWeight).order_by(ScoringWeight.name).all()
         app_settings = {s.key: s.value for s in session.query(AppSetting)}
         has_orders = session.query(Order).count() > 0
+        llm = load_llm_config(session)
     return templates.TemplateResponse(
         request=request, name="settings.html",
         context={"disclaimer": DISCLAIMER, "weights": weights,
                  "app_settings": app_settings, "settings": settings,
-                 "has_orders": has_orders,
+                 "has_orders": has_orders, "llm": llm,
                  "env_summary": {
                      "database": str(settings.db_path or settings.database_url),
                      "provider": settings.market_data_provider,
@@ -94,3 +98,46 @@ def save_defaults(alert_default_drawdown_pct: str = Form(""),
             row.updated_at = dt.datetime.now(dt.timezone.utc)
         session.commit()
     return RedirectResponse("/settings", status_code=303)
+
+
+@router.post("/settings/llm")
+async def save_llm(request: Request):
+    form = await request.form()
+    with session_scope() as session:
+        save_llm_config(session, config_from_form(dict(form), load_llm_config(session)))
+        session.commit()
+    return RedirectResponse("/settings", status_code=303)
+
+
+@router.post("/settings/llm/test")
+async def test_llm(request: Request):
+    """HTMX: probe the endpoint as currently typed in the form (saved or not)."""
+    form = await request.form()
+    with session_scope() as session:
+        config = config_from_form(dict(form), load_llm_config(session))
+    context: dict = {"ok": False, "models": [], "model": config.model, "reply": None,
+                     "error": None, "models_error": None}
+    if not config.base_url:
+        context["error"] = "Enter a base URL first."
+    else:
+        client = LLMClient(config)
+        try:
+            # Some servers (older llama.cpp) have no /models; chat decides.
+            try:
+                context["models"] = client.list_models()
+            except LLMError as exc:
+                context["models_error"] = str(exc)
+            if config.model:
+                context["reply"] = client.chat(
+                    [{"role": "user", "content": 'Reply with exactly {"ok": true}'}],
+                )[:200]
+                context["ok"] = True
+            else:
+                context["ok"] = context["models_error"] is None
+                context["error"] = context["models_error"]
+        except LLMError as exc:
+            context["error"] = str(exc)
+        finally:
+            client.close()
+    return templates.TemplateResponse(request=request, name="partials/llm_test.html",
+                                      context=context)

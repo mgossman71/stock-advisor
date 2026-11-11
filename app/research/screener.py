@@ -15,7 +15,8 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.db.models import PriceHistory, Recommendation, Ticker
-from app.research.engine import RuleBasedAdvisor
+from app.research.engine import AdvisorEngine
+from app.research.llm_advisor import advisor_for
 
 MIN_BARS_TO_SCORE = 60  # under ~3 months of bars the momentum block is noise
 
@@ -50,11 +51,11 @@ def screening_candidates(session: Session) -> list[Ticker]:
 
 
 def screen_universe(
-    session: Session, *, advisor: RuleBasedAdvisor | None = None,
+    session: Session, *, advisor: AdvisorEngine | None = None,
     limit: int | None = None,
 ) -> ScreenStats:
     """Build a report + recommendations for every candidate; returns counters."""
-    advisor = advisor or RuleBasedAdvisor()
+    advisor = advisor or advisor_for(session, screening=True)
     stats = ScreenStats()
     candidates = screening_candidates(session)
     if limit:

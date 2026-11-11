@@ -3,8 +3,10 @@
 Personal stock research + paper-trading app. FastAPI / Jinja2 / HTMX / SQLite.
 All six build phases are implemented: data layer, paper-trading core, research
 engine, screener/recommendations, full web UI + scheduler, seed script + README.
-The `AdvisorEngine` protocol (`app/research/engine.py`) is the seam where an
-LLM-based advisor replaces `RuleBasedAdvisor` later.
+The `AdvisorEngine` protocol (`app/research/engine.py`) has two engines:
+`RuleBasedAdvisor` and `LLMAdvisor` (`app/research/llm_advisor.py`, any
+OpenAI-compatible self-hosted model, configured on the Settings page).
+Call sites get theirs from `advisor_for(session, screening=...)`.
 
 What exists: config, DB models + Alembic, provider layer (yfinance -> nasdaq ->
 fred fallback chain), ingestion, universe loading, `python -m app.cli`
@@ -23,7 +25,7 @@ make clean-db-docker           # down -v: ALSO deletes the database volume
 make docker-stats              # stats as the container sees them (volume, not ./data)
 make docker-fetch TICKER=MSFT  # one-shot fetch into the container's volume
 
-make test                      # .venv/bin/python -m pytest -q -> 254 tests, <4s, no network
+make test                      # .venv/bin/python -m pytest -q -> 277 tests, <4s, no network
 make migrate                   # alembic upgrade head
 rm -f data/stock_advisor.db* && make migrate    # rebuild the local DB from scratch
 bash scripts/bootstrap.sh      # .venv (Python 3.11/3.12), install deps, migrate — idempotent
@@ -137,6 +139,12 @@ the README whenever these change), `test_report.py`/`test_advisor.py`
   minus fills on/after the ex-date; booked on the ex-date into cash *and*
   `realized_pnl`; 30-day lookback.  The fallback chain treats an empty
   dividend list as success (non-payers), like an empty quote.
+- **LLM advisor** (`app/research/llm.py`, `llm_advisor.py`): config is
+  `app_settings` rows `llm_*`, not env vars. The model never sets the entry
+  price (latest stored close only), bad levels fall back to rule defaults,
+  and any model failure persists the plain rules report with
+  `payload.llm_error`. `seed_demo` deliberately stays on `RuleBasedAdvisor`.
+  Tests inject a fake client; `test_llm_advisor.py` pins the guards.
 - **Writes refuse cross-site requests** (`same_origin_writes` in
   `app/main.py`): no login exists, so this is the only CSRF guard.  Compose
   publishes the port on `127.0.0.1` only for the same reason.
