@@ -1,5 +1,5 @@
 {% set titles = {"first-run setup": "Setting up the app for the first time",
-                 "refresh": "Refresh job", "auto-refresh": "Auto-refresh", "nightly": "Nightly job", "screen": "Screening"} %}
+                 "refresh": "Full refresh", "prices": "Price refresh", "auto-refresh": "Auto-refresh", "nightly": "Nightly job", "screen": "Screening"} %}
 {% if status.running %}
 <div class="job-result" hx-get="/jobs/status?watching=1" hx-trigger="every 3s" hx-swap="outerHTML">
   <b>{{ titles.get(status.name, status.name) }}</b> — {{ status.phase }}{% if status.detail %} {{ status.detail }}{% endif %}
@@ -19,6 +19,15 @@
 <div class="job-result">
   {% if status.error %}
   <b class="neg">{{ titles.get(status.name, status.name) }} failed:</b> {{ status.error }}
+  {% elif status.result is not none and status.result.quoted is defined %}
+  {% set r = status.result %}
+  <b>{{ titles.get(status.name, status.name) }} done:</b>
+  priced {{ r.quoted|length }} / {{ r.symbols }} ·
+  limit orders filled={{ r.orders.get('filled', 0) }} · alerts triggered={{ r.alerts_triggered }}
+  {% if r.errors %}
+  <details><summary class="neg">{{ r.errors|length }} price error(s)</summary>
+    <ul>{% for e in r.errors %}<li>{{ e }}</li>{% endfor %}</ul></details>
+  {% endif %}
   {% elif status.name == "screen" %}
   {% set stats = status.result %}
   <b>Screen done:</b> scored={{ stats.scored }}

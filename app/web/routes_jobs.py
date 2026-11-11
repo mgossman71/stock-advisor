@@ -1,6 +1,7 @@
 """Manual job trigger, job progress + data export.
 
-`POST /jobs/refresh` starts the full nightly pass in the background (via
+`POST /jobs/prices` starts the quick price refresh (quotes for what the user
+holds or watches only); `POST /jobs/refresh` starts the full nightly pass in the background (via
 ``app.background.runner``) and returns a progress panel that polls
 `GET /jobs/status` until the job finishes - no request stays open for the
 length of the job, so a reverse proxy can't time it out.
@@ -14,7 +15,7 @@ from sqlalchemy import text as sa_text
 
 from app.background import runner
 from app.db.base import session_scope
-from app.jobs import run_pipeline
+from app.jobs import run_pipeline, run_price_refresh
 from app.web.common import templates
 
 router = APIRouter()
@@ -33,6 +34,13 @@ def jobs_refresh(request: Request, max_symbols: int | None = Form(None),
     """Start the pipeline (or, if a job is already running, show its progress)."""
     runner.start("refresh", lambda progress: run_pipeline(
         progress, max_symbols=max_symbols, with_alternatives=bool(with_alternatives)))
+    return job_status_response(request)
+
+
+@router.post("/jobs/prices")
+def jobs_prices(request: Request):
+    """Quick job: live quotes for held/watched symbols, then marks + alerts."""
+    runner.start("prices", run_price_refresh)
     return job_status_response(request)
 
 

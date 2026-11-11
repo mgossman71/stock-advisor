@@ -1,4 +1,5 @@
-"""Interval auto-refresh: the "Run refresh job" button, on a timer.
+"""Interval auto-refresh: the "Refresh prices" (default) or "Full refresh"
+button, on a timer.
 
 Config lives in ``app_settings`` rows ``autorefresh_*`` (edited on the Settings
 page), not env vars, so it can be changed without a restart: saving calls
@@ -39,8 +40,11 @@ NEW_YORK = ZoneInfo("America/New_York")
 MARKET_OPEN = dt.time(9, 30)
 MARKET_CLOSE = dt.time(16, 15)
 
+MODES = ("prices", "full")
+
 KEYS = {
     "enabled": "autorefresh_enabled",
+    "mode": "autorefresh_mode",
     "minutes": "autorefresh_minutes",
     "market_hours_only": "autorefresh_market_hours_only",
 }
@@ -55,6 +59,8 @@ class AutoRefreshConfig:
     enabled: bool = False
     minutes: int = DEFAULT_MINUTES
     market_hours_only: bool = True
+    #: ``prices`` = quotes for held/watched symbols; ``full`` = whole pipeline.
+    mode: str = "prices"
 
 
 def parse_minutes(raw: str | None, default: int = DEFAULT_MINUTES) -> int:
@@ -73,7 +79,12 @@ def load_config(session: Session) -> AutoRefreshConfig:
         enabled=rows.get(KEYS["enabled"]) == "1",
         minutes=parse_minutes(rows.get(KEYS["minutes"])),
         market_hours_only=rows.get(KEYS["market_hours_only"], "1") == "1",
+        mode=parse_mode(rows.get(KEYS["mode"])),
     )
+
+
+def parse_mode(raw: str | None) -> str:
+    return raw if raw in MODES else "prices"
 
 
 def save_config(session: Session, config: AutoRefreshConfig) -> None:
@@ -82,6 +93,7 @@ def save_config(session: Session, config: AutoRefreshConfig) -> None:
         "enabled": "1" if config.enabled else "0",
         "minutes": str(parse_minutes(str(config.minutes))),
         "market_hours_only": "1" if config.market_hours_only else "0",
+        "mode": parse_mode(config.mode),
     }
     now = dt.datetime.now(dt.timezone.utc)
     for field, value in values.items():
@@ -100,14 +112,18 @@ def market_open(now: dt.datetime | None = None) -> bool:
     return local.weekday() < 5 and MARKET_OPEN <= local.time() <= MARKET_CLOSE
 
 
-def run_tick(market_hours_only: bool, *, now: dt.datetime | None = None,
-             job=None) -> str:
+def job_for(mode: str):
+    from app.jobs import run_pipeline, run_price_refresh  # heavy research imports
+    return run_pipeline if mode == "full" else run_price_refresh
+
+
+def run_tick(market_hours_only: bool, mode: str = "prices", *,
+             now: dt.datetime | None = None, job=None) -> str:
     """One scheduled tick: ``'ran'``, ``'closed'`` or ``'busy'``."""
     if market_hours_only and not market_open(now):
         return "closed"
     if job is None:
-        from app.jobs import run_pipeline  # jobs imports heavy research modules
-        job = run_pipeline
+        job = job_for(mode)
     if not runner.run_blocking(JOB_NAME, job):
         logger.info("auto-refresh skipped: another job is still running")
         return "busy"
@@ -130,10 +146,11 @@ def apply_schedule(config: AutoRefreshConfig, scheduler=None) -> None:
         logger.info("auto-refresh off")
         return
     scheduler.add_job(run_tick, IntervalTrigger(minutes=config.minutes),
-                      kwargs={"market_hours_only": config.market_hours_only},
+                      kwargs={"market_hours_only": config.market_hours_only,
+                              "mode": config.mode},
                       id=JOB_ID, replace_existing=True,
                       max_instances=1, coalesce=True)
-    logger.info("auto-refresh every %d min%s", config.minutes,
+    logger.info("auto-refresh (%s) every %d min%s", config.mode, config.minutes,
                 " (market hours only)" if config.market_hours_only else "")
 
 

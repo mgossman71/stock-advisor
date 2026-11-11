@@ -211,7 +211,7 @@ def test_finished_job_shows_its_result_only_to_the_watcher(client, monkeypatch):
                                                        new_recommendations=1))
     monkeypatch.setattr("app.web.routes_jobs.runner", runner)
     watched = client.get("/jobs/status?watching=1").text
-    assert "Refresh job done." in watched and "new calls=1" in watched
+    assert "Full refresh done." in watched and "new calls=1" in watched
     assert "every 3s" not in watched  # polling stops
     assert client.get("/jobs/status").text.strip() == ""  # plain page loads: quiet
 

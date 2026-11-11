@@ -12,7 +12,7 @@ from app.db.models import (
     Alert, DataFetchLog, PortfolioSnapshot, PriceHistory, Recommendation,
 )
 from app.ingestion.ingest import ensure_ticker
-from app.jobs import evaluate_alerts, run_nightly
+from app.jobs import evaluate_alerts, refresh_prices, run_nightly
 from app.trading.accounts import get_or_open_account
 from app.trading.orders import execute_order
 from tests.conftest import FakeProvider, make_bar
@@ -141,3 +141,105 @@ def test_nightly_books_dividends_once(session, settings):
     assert first.dividends_booked == D("12.50")
     second = run_nightly(session, _provider(), settings=settings, today=DAY)
     assert second.dividends_booked == D("0")
+
+
+# --- quick price refresh -----------------------------------------------------
+
+def _quote(symbol: str, price: str):
+    from app.providers.base import Quote
+    return Quote(symbol=symbol, price=D(price),
+                 as_of=dt.datetime(DAY.year, DAY.month, DAY.day, 21, tzinfo=dt.timezone.utc))
+
+
+class _QuoteBoard(FakeProvider):
+    """Quotes per symbol; records which symbols were asked for."""
+
+    def __init__(self, prices: dict[str, str]):
+        super().__init__()
+        self.prices, self.asked = prices, []
+
+    def get_quote(self, symbol, *, asset_class="stock"):
+        from app.providers.base import ProviderResult
+        self.calls.append("quote")
+        self.asked.append(symbol)
+        if symbol not in self.prices:
+            return ProviderResult(self.name, f"quote({symbol})", ok=False, error="no price")
+        quote = _quote(symbol, self.prices[symbol])
+        return ProviderResult(self.name, f"quote({symbol})", ok=True, data=(quote,),
+                              row_count=1, as_of=quote.as_of)
+
+
+def _price_on(session, symbol: str, day: dt.date) -> D | None:
+    t = ensure_ticker(session, symbol)
+    row = session.query(PriceHistory).filter_by(ticker_id=t.id, date=day).one_or_none()
+    return row.close if row else None
+
+
+def test_price_refresh_only_quotes_what_is_held_or_watched(session, settings):
+    from app.db.models import Position
+
+    _seed(session)                                   # ACME is universe-only
+    ensure_ticker(session, "HELD", in_universe=True)
+    ensure_ticker(session, "WATCH", in_watchlist=True)
+    held = ensure_ticker(session, "HELD")
+    session.add(PriceHistory(ticker_id=held.id, date=DAY - dt.timedelta(days=1),
+                             close=D("50"), source="fake"))
+    session.commit()
+    account = get_or_open_account(session, settings)
+    execute_order(session, account, "HELD", "buy", 10, settings=settings)
+    session.commit()
+
+    board = _QuoteBoard({"HELD": "55.50", "WATCH": "20", "^SPX": "4100"})
+    report = refresh_prices(session, board, settings=settings, today=DAY)
+
+    assert sorted(board.asked) == ["HELD", "WATCH", "^SPX"], "universe-only ACME is skipped"
+    assert set(board.calls) == {"quote"}, "no history/fundamentals/news calls"
+    assert sorted(report.quoted) == ["HELD", "WATCH", "^SPX"] and report.errors == []
+    position = session.query(Position).filter_by(account_id=account.id).one()
+    assert position.last_price == D("55.50")
+    assert report.snapshot_date == DAY.isoformat()
+
+
+def test_price_refresh_fills_limits_triggers_alerts_and_is_idempotent(session, settings):
+    from app.db.models import Order
+
+    _seed(session)
+    account = get_or_open_account(session, settings)
+    pending = execute_order(session, account, "ACME", "buy", 5, settings=settings,
+                            limit_price=D("150"))
+    assert pending.order.status == "pending"   # stored close 179 is above the limit
+    acme = ensure_ticker(session, "ACME")
+    session.add(Alert(ticker_id=acme.id, type="price_below", threshold=D("160"),
+                      message="placeholder"))
+    session.commit()
+
+    board = _QuoteBoard({"ACME": "149.00", "^SPX": "4000"})
+    report = refresh_prices(session, board, settings=settings, today=DAY)
+    assert "ACME" in board.asked, "pending orders and alerts pull their ticker in"
+    assert report.orders.get("filled") == 1 and report.alerts_triggered == 1
+    assert session.get(Order, pending.order.id).status == "filled"
+    assert _price_on(session, "ACME", DAY) == D("149.00")
+
+    bars = session.query(PriceHistory).count()
+    again = refresh_prices(session, _QuoteBoard({"ACME": "149.00", "^SPX": "4000"}),
+                           settings=settings, today=DAY)
+    assert again.orders.get("filled", 0) == 0 and again.alerts_triggered == 0
+    assert session.query(PriceHistory).count() == bars
+    assert session.query(PortfolioSnapshot).count() == 1
+
+
+def test_price_refresh_reports_symbols_without_a_quote(session, settings):
+    ensure_ticker(session, "GONE", in_watchlist=True)
+    session.commit()
+    report = refresh_prices(session, _QuoteBoard({}), settings=settings, today=DAY)
+    assert report.quoted == [] and len(report.errors) == 2
+    assert any(e.startswith("GONE:") for e in report.errors)
+
+
+def test_target_symbols_is_price_symbols_plus_universe_and_vix(session, settings):
+    from app.jobs import price_symbols, target_symbols
+
+    _seed(session)
+    ensure_ticker(session, "WATCH", in_watchlist=True)
+    assert price_symbols(session, settings) == ["WATCH", "^SPX"]
+    assert target_symbols(session, settings) == ["ACME", "WATCH", "^SPX", "^VIX"]

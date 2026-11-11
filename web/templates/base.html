@@ -28,8 +28,11 @@
       <a href="/settings" class="{{ 'active' if nav == 'settings' }}">Settings</a>
     </nav>
     <div class="topbar-actions">
+      <form hx-post="/jobs/prices" hx-target="#job-result" hx-swap="innerHTML" class="jobform">
+        <button type="submit" class="btn" title="Live quotes for what you hold or watch, then re-mark positions">Refresh prices</button>
+      </form>
       <form hx-post="/jobs/refresh" hx-target="#job-result" hx-swap="innerHTML" class="jobform">
-        <button type="submit" class="btn secondary">Run refresh job</button>
+        <button type="submit" class="btn secondary" title="Fetch everything for the whole universe and re-screen (slow)">Full refresh</button>
       </form>
       <form method="post" action="/logout" class="jobform">
         <button type="submit" class="btn quiet">Sign out</button>

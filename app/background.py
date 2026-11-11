@@ -1,7 +1,7 @@
 """One background job at a time, with progress the UI can poll.
 
-The first-run setup, the nightly pipeline, the "Run refresh job" button and
-"Screen now" all go through ``runner``.  Single-flight on purpose: two
+The first-run setup, the nightly pipeline, the "Refresh prices" and "Full
+refresh" buttons, auto-refresh and "Screen now" all go through ``runner``.  Single-flight on purpose: two
 pipelines writing the same SQLite file would only contend for the lock, and
 a second click while one is running should report progress, not start a
 duplicate.  Jobs run in a daemon thread so a long fetch (or a slow local LLM)

@@ -433,3 +433,27 @@ def test_ticket_shows_price_age(client):
     html = client.get("/portfolio").text
     assert 'data-asof="2026-01-09"' in html and 'data-session="' in html
     assert 'id="paper-asof"' in html
+
+
+def test_refresh_prices_button_starts_the_quick_job(client, monkeypatch):
+    started: list[str] = []
+    monkeypatch.setattr("app.web.routes_jobs.runner.start",
+                        lambda name, job: started.append(name) or True)
+    page = client.get("/").text
+    assert 'hx-post="/jobs/prices"' in page and "Refresh prices" in page
+    assert 'hx-post="/jobs/refresh"' in page and "Full refresh" in page
+    assert client.post("/jobs/prices").status_code == 200
+    assert started == ["prices"]
+
+
+def test_price_refresh_result_is_summarised(client, monkeypatch):
+    from app.background import JobRunner
+    from app.jobs import PriceRefreshReport
+
+    runner = JobRunner()
+    runner.run_blocking("prices", lambda p: PriceRefreshReport(
+        symbols=3, quoted=["A", "B"], errors=["C: no price"], orders={"filled": 1}))
+    monkeypatch.setattr("app.web.routes_jobs.runner", runner)
+    html = client.get("/jobs/status?watching=1").text
+    assert "Price refresh done:" in html and "priced 2 / 3" in html
+    assert "limit orders filled=1" in html and "1 price error(s)" in html

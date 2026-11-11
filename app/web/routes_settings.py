@@ -120,7 +120,8 @@ def save_defaults(alert_default_drawdown_pct: str = Form(""),
 @router.post("/settings/autorefresh")
 def save_autorefresh(autorefresh_enabled: str = Form(""),
                      autorefresh_minutes: str = Form(""),
-                     autorefresh_market_hours_only: str = Form("")):
+                     autorefresh_market_hours_only: str = Form(""),
+                     autorefresh_mode: str = Form("")):
     """Persist the interval and re-arm the live scheduler (no restart needed)."""
     with session_scope() as session:
         current = autorefresh.load_config(session)
@@ -128,6 +129,7 @@ def save_autorefresh(autorefresh_enabled: str = Form(""),
             enabled=autorefresh_enabled == "1",
             minutes=autorefresh.parse_minutes(autorefresh_minutes, current.minutes),
             market_hours_only=autorefresh_market_hours_only == "1",
+            mode=autorefresh.parse_mode(autorefresh_mode or current.mode),
         )
         autorefresh.save_config(session, config)
         session.commit()

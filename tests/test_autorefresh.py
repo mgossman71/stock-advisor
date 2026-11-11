@@ -17,7 +17,7 @@ UTC = dt.timezone.utc
 
 
 def test_defaults_are_off_hourly_market_hours(session):
-    assert load_config(session) == AutoRefreshConfig(False, 60, True)
+    assert load_config(session) == AutoRefreshConfig(False, 60, True, "prices")
 
 
 @pytest.mark.parametrize("raw,expected", [
@@ -64,12 +64,12 @@ def test_apply_schedule_adds_retimes_and_removes():
         apply_schedule(AutoRefreshConfig(True, 15, True), scheduler)
         job = scheduler.get_job(autorefresh.JOB_ID)
         assert job.trigger.interval == dt.timedelta(minutes=15)
-        assert job.kwargs == {"market_hours_only": True}
+        assert job.kwargs == {"market_hours_only": True, "mode": "prices"}
 
-        apply_schedule(AutoRefreshConfig(True, 120, False), scheduler)
+        apply_schedule(AutoRefreshConfig(True, 120, False, "full"), scheduler)
         job = scheduler.get_job(autorefresh.JOB_ID)
         assert job.trigger.interval == dt.timedelta(minutes=120)
-        assert job.kwargs == {"market_hours_only": False}
+        assert job.kwargs == {"market_hours_only": False, "mode": "full"}
         assert len(scheduler.get_jobs()) == 1
 
         apply_schedule(AutoRefreshConfig(False, 120, False), scheduler)
@@ -89,17 +89,25 @@ def test_settings_form_saves_and_rearms_the_live_scheduler(client, monkeypatch):
 
         r = client.post("/settings/autorefresh", follow_redirects=False, data={
             "autorefresh_enabled": "1", "autorefresh_minutes": "30",
-            "autorefresh_market_hours_only": "1"})
+            "autorefresh_market_hours_only": "1", "autorefresh_mode": "full"})
         assert r.status_code == 303
         with session_scope() as s:
-            assert load_config(s) == AutoRefreshConfig(True, 30, True)
+            assert load_config(s) == AutoRefreshConfig(True, 30, True, "full")
         job = scheduler.get_job(autorefresh.JOB_ID)
         assert job.trigger.interval == dt.timedelta(minutes=30)
-        assert "on · every 30 min" in client.get("/settings").text
+        assert "on · full every 30 min" in client.get("/settings").text
 
-        client.post("/settings/autorefresh", data={"autorefresh_minutes": "30"})
+        client.post("/settings/autorefresh", data={"autorefresh_minutes": "30",
+                                                   "autorefresh_mode": "bogus"})
         with session_scope() as s:
-            assert load_config(s) == AutoRefreshConfig(False, 30, False)
+            assert load_config(s) == AutoRefreshConfig(False, 30, False, "prices")
         assert scheduler.get_job(autorefresh.JOB_ID) is None
     finally:
         scheduler.shutdown(wait=False)
+
+
+def test_mode_picks_the_job():
+    from app.jobs import run_pipeline, run_price_refresh
+    assert autorefresh.job_for("prices") is run_price_refresh
+    assert autorefresh.job_for("full") is run_pipeline
+    assert autorefresh.parse_mode("nonsense") == "prices"

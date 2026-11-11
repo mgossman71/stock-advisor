@@ -1,4 +1,10 @@
-"""Background work: the nightly pipeline and its manual trigger.
+"""Background work: the nightly pipeline, its manual trigger, and the quick
+price refresh.
+
+``run_price_refresh`` is the cheap job ("Refresh prices"): one live quote per
+symbol the user holds or watches, then fills/marks/snapshot/alerts.  No
+history, fundamentals, news, screening or grading - those stay in the full
+pass, which is what makes the full pass slow.
 
 One pass = fetch what matters -> accrue borrow -> book dividends -> retry
 pending limit orders -> mark positions -> snapshot the day -> score/screen -> grade
@@ -24,11 +30,12 @@ from sqlalchemy.orm import Session
 
 from app.config import Settings, get_settings
 from app.db.models import (
-    Alert, DataFetchLog, EarningsEvent, PriceHistory, Recommendation, ResearchReport, Ticker,
+    Alert, DataFetchLog, EarningsEvent, Order, PriceHistory, Recommendation, ResearchReport,
+    Ticker,
 )
 from app.background import Progress
 from app.db.base import session_scope
-from app.ingestion.ingest import log_fetch, refresh_symbol
+from app.ingestion.ingest import ingest_quote, log_fetch, refresh_symbol
 from app.ingestion.universe import load_universe, persist_universe
 from app.providers.registry import build_provider
 from app.providers.base import MarketDataProvider
@@ -73,27 +80,58 @@ class JobReport:
         }
 
 
-def target_symbols(session: Session, settings: Settings) -> list[str]:
-    """Everything the nightly job must keep fresh: universe + watchlist +
-    open paper positions + real-ledger holdings + open recommendations +
-    benchmark + VIX."""
+@dataclass
+class PriceRefreshReport:
+    """Summary of one quick price refresh."""
+
+    symbols: int = 0
+    quoted: list[str] = field(default_factory=list)
+    errors: list[str] = field(default_factory=list)
+    orders: dict[str, int] = field(default_factory=dict)
+    snapshot_date: str | None = None
+    alerts_triggered: int = 0
+
+    def as_dict(self) -> dict:
+        return {"symbols": self.symbols, "quoted": self.quoted, "errors": self.errors,
+                "orders": self.orders, "snapshot_date": self.snapshot_date,
+                "alerts_triggered": self.alerts_triggered}
+
+
+def price_symbols(session: Session, settings: Settings) -> list[str]:
+    """What the user holds or watches: open paper positions, real-ledger
+    holdings, pending orders, untriggered alerts, open recommendations,
+    watchlist, benchmark.  Screening-only universe members are left out."""
     from app.db.models import Position
 
     symbols: set[str] = set()
-    symbols.update(session.scalars(
-        select(Ticker.symbol).where((Ticker.in_universe.is_(True))
-                                    | (Ticker.in_watchlist.is_(True)))
-    ))
+    symbols.update(session.scalars(select(Ticker.symbol).where(Ticker.in_watchlist.is_(True))))
     symbols.update(session.scalars(
         select(Ticker.symbol).join(Position, Position.ticker_id == Ticker.id)
         .where(Position.qty != 0)
     ))
     symbols.update(lot.trade.ticker.symbol for lot in open_lots(session))
     symbols.update(session.scalars(
+        select(Ticker.symbol).join(Order, Order.ticker_id == Ticker.id)
+        .where(Order.status == "pending")
+    ))
+    symbols.update(session.scalars(
+        select(Ticker.symbol).join(Alert, Alert.ticker_id == Ticker.id)
+        .where(Alert.triggered_at.is_(None), Alert.acknowledged.is_(False))
+    ))
+    symbols.update(session.scalars(
         select(Ticker.symbol).join(Recommendation, Recommendation.ticker_id == Ticker.id)
         .where(Recommendation.status == "open")
     ))
-    symbols.update({settings.benchmark_symbol, settings.vix_symbol})
+    symbols.add(settings.benchmark_symbol)
+    return sorted(symbols)
+
+
+def target_symbols(session: Session, settings: Settings) -> list[str]:
+    """Everything the nightly job must keep fresh: the screening universe +
+    everything ``price_symbols`` covers + VIX."""
+    symbols = set(price_symbols(session, settings))
+    symbols.update(session.scalars(select(Ticker.symbol).where(Ticker.in_universe.is_(True))))
+    symbols.add(settings.vix_symbol)
     return sorted(symbols)
 
 
@@ -131,6 +169,60 @@ def run_pipeline(progress: Progress | None = None, *, max_symbols: int | None = 
         return run_nightly(session, build_provider(settings), settings=settings,
                            max_symbols=max_symbols, with_alternatives=with_alternatives,
                            load_universe_if_empty=True, progress=progress)
+
+
+def run_price_refresh(progress: Progress | None = None) -> PriceRefreshReport:
+    """Background entry point for "Refresh prices": own session + provider."""
+    settings = get_settings()
+    with session_scope() as session:
+        return refresh_prices(session, build_provider(settings), settings=settings,
+                              progress=progress)
+
+
+def refresh_prices(
+    session: Session, provider: MarketDataProvider, *,
+    settings: Settings | None = None, today: dt.date | None = None,
+    progress: Progress | None = None,
+) -> PriceRefreshReport:
+    """Quote what the user holds/watches, then fill limits, mark, snapshot, alert.
+
+    Idempotent like the full pass: quotes upsert the day's provisional bar
+    (never a settled one), pending limits fill at most once, the snapshot
+    merges per date.  Borrow and dividends are left to the full pass, which
+    gates them per day.
+    """
+    settings = settings or get_settings()
+    today = today or dt.date.today()
+    report = PriceRefreshReport()
+    symbols = price_symbols(session, settings)
+    report.symbols = len(symbols)
+    for index, symbol in enumerate(symbols, start=1):
+        if progress is not None:
+            progress("fetching prices", index - 1, len(symbols), symbol)
+        asset = "index" if symbol in (settings.benchmark_symbol, settings.vix_symbol) else "stock"
+        try:
+            stats, quote = ingest_quote(session, provider, symbol, asset_class=asset)
+        except Exception as exc:  # one bad symbol must not stop the rest
+            report.errors.append(f"{symbol}: {exc}")
+        else:
+            if quote is None:
+                report.errors.append(f"{symbol}: {'; '.join(stats.notes) or 'no quote'}")
+            else:
+                report.quoted.append(symbol)
+        session.commit()
+
+    if progress is not None:
+        progress("marking positions")
+    account = get_or_open_account(session, settings)
+    report.orders = process_pending_orders(session, account, settings=settings)
+    session.commit()
+    mark_positions(session, account)
+    snapshot = write_snapshot(session, account, today, benchmark_symbol=settings.benchmark_symbol)
+    report.snapshot_date = snapshot.snapshot_date.isoformat()
+    session.commit()
+    report.alerts_triggered = evaluate_alerts(session, settings, today=today)
+    session.commit()
+    return report
 
 
 def run_screen_only(progress: Progress | None = None):

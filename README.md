@@ -83,14 +83,21 @@ actions, researches every stock and creates the first suggestions. A
 progress bar shows at the top of every page; expect 10–20 minutes for 100
 stocks. If the process stops part-way, the next start resumes (prices
 already fetched are skipped). After that, the nightly job (`NIGHTLY_CRON`)
-keeps everything current. The "Run refresh job" and "Screen now" buttons
-also run in the background, so a reverse proxy's request timeout can't
+keeps everything current. The "Refresh prices", "Full refresh" and "Screen
+now" buttons also run in the background, so a reverse proxy's request timeout can't
 kill them.
 
-**Auto-refresh** (Settings → Auto-refresh, off by default) runs the same
-pass as "Run refresh job" every 5 min to 12 h. It can be limited to US
+**Refresh prices** fetches one live quote per symbol you hold or watch
+(paper positions, real holdings, pending orders, alerts, open calls,
+watchlist, benchmark), then fills limit orders, re-marks positions and
+checks alerts. It takes seconds. **Full refresh** is the whole nightly pass:
+history, fundamentals and news for the entire universe, then a re-screen.
+It takes minutes.
+
+**Auto-refresh** (Settings → Auto-refresh, off by default) runs either job,
+prices only by default, every 5 min to 12 h. It can be limited to US
 market hours (Mon–Fri 09:30–16:15 New York, no holiday calendar). Saving
-re-arms the scheduler straight away, so there's no restart. A tick that's
+re-arms the scheduler straight away, so there's no restart. A run that's
 due while another job is running is skipped, not queued. The nightly cron
 still runs either way.
 
