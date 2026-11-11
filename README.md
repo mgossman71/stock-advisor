@@ -72,6 +72,8 @@ never zero-filled). Stance: **bullish >= 60**, **bearish <= 40**.
 - **Value (0.30)** — PE vs sector median (median→50, half→100, double→0;
   negative PE = 0, loss-making is not "cheap"); EV/EBITDA 25→0 … 8→100;
   P/S 12→0 … 0.5→100; P/B 8→0 … 0.5→100; FCF yield 0→0 … 8→100.
+  Negative EV/EBITDA, P/S or P/B (e.g. negative book value) is *excluded* as
+  not meaningful, like missing data — a negative multiple is never "cheap".
 - **Momentum (0.25)** — 1m/3m/6m/12m returns mapped −20 %→0 … +20 %→100;
   distance from 52-wk high −50 %→0 … 0→100; RSI(14) directly, but ≥ 80 loses
   2 points per RSI point above 70 (overheated); above 50/200-day SMA

@@ -98,8 +98,12 @@ def _map(value: Decimal | None, zero_at: Decimal, hundred_at: Decimal,
         return Component(name, Decimal("50"), "degenerate threshold", evidence)
     score = (value - zero_at) / span * HUNDRED
     shown = value.quantize(Decimal("0.01"))
-    note = f"{shown} mapped from [{zero_at}, {hundred_at}]"
-    return Component(name, _clamp(score), note, evidence)
+    score_shown = _clamp(score)
+    better = "lower numbers are better" if hundred_at < zero_at else "higher numbers are better"
+    subject = evidence.label if evidence is not None else name.replace("_", " ")
+    note = (f"{subject} of {shown} scores {score_shown}/100 - {better} "
+            f"({hundred_at} earns 100, {zero_at} earns 0)")
+    return Component(name, score_shown, note, evidence)
 
 
 def _avg_known(components: list[Component]) -> Decimal | None:
@@ -133,15 +137,24 @@ def value_score(fund, sector_median_pe: Decimal | None,
     else:
         comps.append(Component("pe_vs_sector", None, "unavailable", None))
 
-    comps.append(_map(fund.ev_ebitda if fund else None, Decimal("25"), Decimal("8"),
-                      Evidence("EV/EBITDA", str(fund.ev_ebitda), src, as_of)
-                      if fund and fund.ev_ebitda is not None else None, "ev_ebitda"))
-    comps.append(_map(fund.ps if fund else None, Decimal("12"), Decimal("0.5"),
-                      Evidence("P/S", str(fund.ps), src, as_of)
-                      if fund and fund.ps is not None else None, "ps"))
-    comps.append(_map(fund.pb if fund else None, Decimal("8"), Decimal("0.5"),
-                      Evidence("P/B", str(fund.pb), src, as_of)
-                      if fund and fund.pb is not None else None, "pb"))
+    for name, label, zero_at, hundred_at in (
+        ("ev_ebitda", "EV/EBITDA", Decimal("25"), Decimal("8")),
+        ("ps", "P/S", Decimal("12"), Decimal("0.5")),
+        ("pb", "P/B", Decimal("8"), Decimal("0.5")),
+    ):
+        val = getattr(fund, name) if fund else None
+        if val is not None and val < Decimal("0.01"):
+            # Negative or implausibly small multiple = broken input (negative
+            # book value, or a 0.00 P/B that rounds to nothing). Scoring that
+            # as "very cheap" is the exact failure mode the spec forbids -
+            # exclude it, like missing data.
+            comps.append(Component(name, None,
+                                   f"{label} of {val} is not meaningful",
+                                   Evidence(label, str(val), src, as_of)))
+        else:
+            comps.append(_map(val, zero_at, hundred_at,
+                              Evidence(label, str(val), src, as_of) if val is not None else None,
+                              name))
     comps.append(_map(fund.fcf_yield if fund else None, ZERO, Decimal("8"),
                       Evidence("FCF yield %", str(fund.fcf_yield), src, as_of)
                       if fund and fund.fcf_yield is not None else None, "fcf_yield"))
@@ -172,10 +185,10 @@ def momentum_score(returns: dict[str, Decimal | None], rsi_value: Decimal | None
         # at/above 80 is "overheated" and loses 2 points per RSI point over 70.
         if rsi_value >= 80:
             score = HUNDRED - (rsi_value - Decimal("70")) * Decimal("2")
-            note = f"RSI {rsi_value} is overheated"
+            note = f"RSI of {rsi_value} is overheated (scores {_clamp(score)}/100)"
         else:
             score = rsi_value
-            note = f"RSI {rsi_value} used directly"
+            note = f"RSI of {rsi_value} maps straight to its score (scores {_clamp(score)}/100)"
         comps.append(Component("rsi14", _clamp(score), note,
                                Evidence("RSI(14)", str(rsi_value), "price_history")))
 
@@ -183,13 +196,17 @@ def momentum_score(returns: dict[str, Decimal | None], rsi_value: Decimal | None
         comps.append(Component("trend_vs_sma", None, "not enough history for 200-day SMA",
                                None))
     else:
-        score = HUNDRED if (above_50 and above_200) else (
-            Decimal("50") if (above_50 or above_200) else ZERO
-        )
+        if above_50 and above_200:
+            score, desc = HUNDRED, "price is above both its 50-day and 200-day averages (scores 100/100)"
+        elif above_50:
+            score, desc = Decimal("50"), "price is above its 50-day but below its 200-day average (scores 50/100)"
+        elif above_200:
+            score, desc = Decimal("50"), "price is above its 200-day but below its 50-day average (scores 50/100)"
+        else:
+            score, desc = ZERO, "price is below both its 50-day and 200-day averages (scores 0/100)"
         comps.append(Component(
-            "trend_vs_sma", score,
-            f"above50={above_50} above200={above_200}",
-            Evidence("vs 50/200-day SMA", f"{above_50}/{above_200}", "price_history"),
+            "trend_vs_sma", score, desc,
+            Evidence("vs 50/200-day SMA", desc, "price_history"),
         ))
     return SubScore("momentum", _avg_known(comps), comps)
 

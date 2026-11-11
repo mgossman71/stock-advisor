@@ -54,6 +54,20 @@ def test_negative_pe_is_not_cheap():
     assert "not profitable" in comp.note
 
 
+def test_negative_multiples_are_excluded_not_cheap():
+    """Negative P/B (negative book value) must not score as 'very cheap'."""
+    vs = value_score(_fund(pb=D("-113.34"), ev_ebitda=D("-4")), None)
+    pb = next(c for c in vs.components if c.name == "pb")
+    ev = next(c for c in vs.components if c.name == "ev_ebitda")
+    assert pb.score is None and "not meaningful" in pb.note
+    assert ev.score is None and "not meaningful" in ev.note
+    assert "pb" in vs.missing and "ev_ebitda" in vs.missing
+    # A 0.004 P/B reads as "0.00" - broken data, not a deep-value signal.
+    tiny = value_score(_fund(pb=D("0.004")), None)
+    tiny_pb = next(c for c in tiny.components if c.name == "pb")
+    assert tiny_pb.score is None and "not meaningful" in tiny_pb.note
+
+
 def test_missing_value_fields_excluded_not_zeroed():
     bare = _fund(pe_trailing=None, ev_ebitda=None, ps=None, pb=None, fcf_yield=None)
     vs = value_score(bare, D("20"))

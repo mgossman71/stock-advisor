@@ -154,11 +154,15 @@ def build_report(session: Session, symbol: str, *, persist: bool = True) -> Rese
     )
 
     # ---- narrative + evidence ------------------------------------------------
+    def _plain(s: SubScore, c: Component) -> str:
+        """One readable bullet: category + the component's own plain-English note."""
+        return f"{s.name.title()}: {c.note}"
+
     strong = [c for s in subs for c in s.components if c.score is not None and c.score >= 70]
     weak = [c for s in subs for c in s.components if c.score is not None and c.score <= 30]
-    bull_points = [f"{s.name}/{c.name}: {c.note}" for s in subs for c in s.components
+    bull_points = [_plain(s, c) for s in subs for c in s.components
                    if c.score is not None and c.score >= 70]
-    bear_points = [f"{s.name}/{c.name}: {c.note}" for s in subs for c in s.components
+    bear_points = [_plain(s, c) for s in subs for c in s.components
                    if c.score is not None and c.score <= 30]
     risks: list[str] = []
     if vol is not None and vol >= D("35"):
