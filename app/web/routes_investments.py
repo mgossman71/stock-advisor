@@ -1,0 +1,101 @@
+"""My Investments: real purchases made off the advice, gain/loss by holding
+period, and estimated tax liability.  Separate from the paper portfolio on
+purpose - these rows are facts about real money, not simulated fills."""
+
+from __future__ import annotations
+
+import datetime as dt
+from decimal import Decimal, InvalidOperation
+
+from fastapi import APIRouter, Form, Request
+from fastapi.responses import RedirectResponse
+from sqlalchemy import select
+
+from app.db.base import session_scope
+from app.db.models import RealTrade, Recommendation, Ticker
+from app.tracking import RealTradeError, lot_valuations, record_trade, tax_summary
+from app.tracking.taxes import TaxRateError, get_tax_rates, set_tax_rates
+from app.web.common import DISCLAIMER, templates
+
+router = APIRouter()
+
+
+@router.get("/investments")
+def investments_page(request: Request, rec: int | None = None,
+                     qty: int | None = None):
+    """`?rec=<id>&qty=N` pre-fills the ticket from a recommendation."""
+    with session_scope() as session:
+        today = dt.date.today()
+        lots = lot_valuations(session, today)
+        summary = tax_summary(session, today)
+        trades = session.scalars(
+            select(RealTrade).order_by(RealTrade.trade_date.desc(), RealTrade.id.desc())
+            .limit(100)
+        ).all()
+        for t in trades:
+            _ = t.ticker.symbol
+        rates = get_tax_rates(session)
+        symbols = session.scalars(select(Ticker.symbol).order_by(Ticker.symbol)).all()
+        prefill = None
+        if rec:
+            call = session.get(Recommendation, rec)
+            if call is not None:
+                prefill = {
+                    "symbol": call.ticker.symbol,
+                    "side": "buy",  # v1 real ledger is long-only; shorts stay paper
+                    "qty": qty or 10,
+                    "price": str(call.entry_price_at_call),
+                    "recommendation_id": call.id,
+                    "note": f"executed call #{call.id}",
+                }
+    return templates.TemplateResponse(
+        request=request, name="investments.html",
+        context={"disclaimer": DISCLAIMER, "lots": lots, "summary": summary,
+                 "trades": trades, "rates": rates, "symbols": symbols,
+                 "prefill": prefill, "today": today,
+                 "flash": request.query_params.get("flash"),
+                 "err": request.query_params.get("err")},
+    )
+
+
+@router.post("/investments/trade")
+def record_real_trade(
+    request: Request,
+    symbol: str = Form(...),
+    side: str = Form(..., pattern="^(buy|sell)$"),
+    qty: str = Form(...),
+    price: str = Form(...),
+    trade_date: str = Form(""),
+    commission: str = Form("0"),
+    note: str | None = Form(None),
+    recommendation_id: int | None = Form(None),
+):
+    """Record a real-world fill.  Errors come back as a flash on the page."""
+    try:
+        when = dt.date.fromisoformat(trade_date) if trade_date else None
+        with session_scope() as session:
+            trade = record_trade(
+                session, symbol, side, Decimal(qty), Decimal(price),
+                trade_date=when, commission=Decimal(commission or "0"),
+                recommendation_id=recommendation_id, note=note or None,
+            )
+            session.commit()
+            flash = (f"recorded {trade.side} {trade.qty} {trade.ticker.symbol} "
+                     f"@ {trade.price} on {trade.trade_date}")
+    except (RealTradeError, InvalidOperation, ValueError) as exc:
+        return RedirectResponse(f"/investments?err={exc}", status_code=303)
+    return RedirectResponse(f"/investments?flash={flash}", status_code=303)
+
+
+@router.post("/investments/rates")
+def save_rates(short_term_pct: str = Form(...), long_term_pct: str = Form(...)):
+    """Percent inputs (e.g. 32 / 15) stored as fractions in AppSetting."""
+    try:
+        with session_scope() as session:
+            set_tax_rates(session,
+                          Decimal(short_term_pct) / 100,
+                          Decimal(long_term_pct) / 100)
+            session.commit()
+    except (TaxRateError, InvalidOperation) as exc:
+        return RedirectResponse(f"/investments?err={exc}", status_code=303)
+    return RedirectResponse("/investments?flash=tax rates updated", status_code=303)

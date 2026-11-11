@@ -2,6 +2,7 @@
 
 from app.web.routes_alerts import router as alerts_router
 from app.web.routes_dashboard import router as dashboard_router
+from app.web.routes_investments import router as investments_router
 from app.web.routes_jobs import router as jobs_router
 from app.web.routes_portfolio import router as portfolio_router
 from app.web.routes_recommendations import router as recommendations_router
@@ -14,6 +15,7 @@ routers = [
     research_router,
     screen_router,
     portfolio_router,
+    investments_router,
     recommendations_router,
     alerts_router,
     settings_router,

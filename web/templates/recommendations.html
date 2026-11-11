@@ -9,7 +9,7 @@
 <form class="inline" method="get" action="/recommendations">
   <select name="status">
     <option value="">all statuses</option>
-    {% for s in ['open','hit_stop','hit_target','closed','expired'] %}
+    {% for s in ['open','hit_stop','hit_target','closed','expired','dismissed'] %}
     <option value="{{ s }}" {{ 'selected' if s == status }}>{{ s }}</option>{% endfor %}
   </select>
   <select name="direction">
@@ -58,8 +58,14 @@
       <td>
         {% if rec.status == 'open' %}
         <a class="btn" href="/portfolio?prefill={{ rec.id }}">execute</a>
+        {% if rec.direction == 'long' %}
+        <a class="btn" href="/investments?rec={{ rec.id }}">I bought this</a>
+        {% endif %}
         <form hx-post="/recommendations/{{ rec.id }}/close" style="display:inline">
           <button class="btn secondary" type="submit">close</button>
+        </form>
+        <form hx-post="/recommendations/{{ rec.id }}/dismiss" style="display:inline">
+          <button class="btn secondary" type="submit">dismiss</button>
         </form>
         {% endif %}
       </td>

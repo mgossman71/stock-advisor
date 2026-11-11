@@ -34,6 +34,7 @@ from sqlalchemy import (
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
+from app.db.models_advice import Recommendation
 from app.db.models_market import Ticker
 from app.db.types import MONEY, PCT, PRICE, QTY
 
@@ -217,4 +218,45 @@ class Alert(Base):
     acknowledged: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
 
     ticker: Mapped[Ticker | None] = relationship()
+
+
+class RealTrade(Base):
+    """A buy or sell the user *actually executed* at a real broker.
+
+    Deliberately separate from the paper ``orders`` table: paper fills are
+    simulations, these rows are facts about real money.  They are never
+    netted against paper cash and they feed the FIFO cost-basis and
+    tax-liability math in :mod:`app.tracking`.  ``recommendation_id`` is
+    the audit link back to the call that (maybe) drove the decision.
+    """
+
+    __tablename__ = "real_trades"
+    __table_args__ = (Index("ix_real_trades_ticker_date", "ticker_id", "trade_date"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    ticker_id: Mapped[int] = mapped_column(
+        ForeignKey("tickers.id", ondelete="CASCADE"), index=True
+    )
+    recommendation_id: Mapped[int | None] = mapped_column(
+        ForeignKey("recommendations.id", ondelete="SET NULL"), index=True
+    )
+    #: buy | sell
+    side: Mapped[str] = mapped_column(String(4), nullable=False)
+    qty: Mapped[Decimal] = mapped_column(QTY, nullable=False)
+    price: Mapped[Decimal] = mapped_column(PRICE, nullable=False)
+    commission: Mapped[Decimal] = mapped_column(
+        MONEY, nullable=False, default=Decimal("0")
+    )
+    #: User-entered execution date (defaults to today in the app layer).
+    trade_date: Mapped[dt.date] = mapped_column(Date, nullable=False, index=True)
+    note: Mapped[str | None] = mapped_column(String(200))
+    created_at: Mapped[dt.datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    ticker: Mapped[Ticker] = relationship()
+    recommendation: Mapped[Recommendation | None] = relationship()
+
+    def __repr__(self) -> str:  # pragma: no cover - debugging aid
+        return f"<RealTrade {self.side} {self.qty} @ {self.price} {self.trade_date}>"
 

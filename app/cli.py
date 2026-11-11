@@ -5,6 +5,8 @@
     python -m app.cli stats
     python -m app.cli providers
     python -m app.cli adjust-cash 500 --withdraw --note "rebalance"
+    python -m app.cli record-buy AAPL 10 210.50 --rec 7
+    python -m app.cli holdings
 """
 
 from __future__ import annotations
@@ -32,6 +34,7 @@ from app.trading.accounts import (
 )
 from app.trading.orders import execute_order, latest_price
 from app.trading.snapshots import mark_positions, portfolio_values, write_snapshot
+from app.tracking import RealTradeError, lot_valuations, record_trade, tax_summary
 
 PERIOD_DAYS = {"3mo": 92, "6mo": 186, "1y": 365, "2y": 730, "5y": 1826}
 
@@ -223,6 +226,51 @@ def cmd_adjust_cash(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_record(args: argparse.Namespace) -> int:
+    """Record a real buy/sell you executed at your broker (not a paper fill)."""
+    with session_scope() as session:
+        try:
+            trade = record_trade(
+                session, args.symbol, args.side,
+                Decimal(args.qty), Decimal(args.price),
+                trade_date=dt.date.fromisoformat(args.date) if args.date else None,
+                commission=Decimal(args.commission),
+                recommendation_id=args.rec, note=args.note,
+            )
+        except (RealTradeError, ValueError) as exc:  # fromisoformat raises ValueError too
+            print(f"rejected: {exc}")
+            return 1
+        session.commit()
+        link = f" (call #{args.rec})" if args.rec else ""
+        print(f"recorded {trade.side} {trade.qty} {trade.ticker.symbol} "
+              f"@ {trade.price} on {trade.trade_date}{link}")
+    return 0
+
+
+def cmd_holdings(_: argparse.Namespace) -> int:
+    """Open real-money lots with gain/loss and estimated tax if sold today."""
+    with session_scope() as session:
+        today = dt.date.today()
+        print(f"open real lots as of {today}:")
+        for v in lot_valuations(session, today):
+            mark = f"last={v.price} ({v.price_date})" if v.price is not None else "unpriced"
+            gain = f"{v.unrealized:+}" if v.unrealized is not None else "?"
+            tax = f" est_tax_if_sold={v.est_tax_if_sold}" if v.price is not None else ""
+            print(
+                f"  {v.symbol:7s} {v.klass:5s} {v.held_days:>4d}d  "
+                f"qty={str(v.qty):>8s} cost={v.cost_basis} {mark} "
+                f"uPnL={gain}{tax}"
+            )
+        s = tax_summary(session, today)
+        print(
+            f"cost_basis={s['cost_basis']} unrealized={s['unrealized']} "
+            f"est_tax_if_sold_today={s['est_tax_if_sold_today']} "
+            f"est_tax_realized={s['est_tax_realized']} "
+            f"(rates ST={s['rates']['short']} LT={s['rates']['long']}; estimate only)"
+        )
+    return 0
+
+
 def _print_portfolio(session, account, settings) -> None:
     """Print open positions + equity (shared by trade/portfolio commands)."""
     values = portfolio_values(session, account)
@@ -304,6 +352,23 @@ def build_parser() -> argparse.ArgumentParser:
 
     sub.add_parser("portfolio", help="account + open positions + snapshot").set_defaults(
         func=cmd_portfolio
+    )
+
+    for name, side in (("record-buy", "buy"), ("record-sell", "sell")):
+        rec_cmd = sub.add_parser(name, help="record a real-world trade you executed")
+        rec_cmd.add_argument("symbol")
+        rec_cmd.add_argument("qty")
+        rec_cmd.add_argument("price", help="actual fill price you paid/received")
+        rec_cmd.add_argument("--date", default=None, help="YYYY-MM-DD (default: today)")
+        rec_cmd.add_argument("--commission", default="0")
+        rec_cmd.add_argument("--rec", type=int, default=None,
+                             help="link to the recommendation id that drove this")
+        rec_cmd.add_argument("--note", default=None)
+        rec_cmd.set_defaults(func=cmd_record, side=side)
+
+    sub.add_parser("holdings",
+                   help="real lots + gain/loss + estimated tax if sold today").set_defaults(
+        func=cmd_holdings
     )
 
     adjust = sub.add_parser("adjust-cash",

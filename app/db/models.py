@@ -28,6 +28,7 @@ from app.db.models_trading import (
     Order,
     PortfolioSnapshot,
     Position,
+    RealTrade,
 )
 
 __all__ = [
@@ -45,6 +46,7 @@ __all__ = [
     "PortfolioSnapshot",
     "Position",
     "PriceHistory",
+    "RealTrade",
     "Recommendation",
     "RecommendationOutcome",
     "ResearchReport",

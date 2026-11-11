@@ -17,6 +17,11 @@ Alpine.js + Chart.js / SQLite (Alembic-migrated, Postgres-portable).
   risk-per-trade position sizing.  You set the balance: deposits/withdrawals
   (`adjust-cash` or the portfolio page) are booked in an auditable
   `cash_adjustments` ledger and excluded from daily P&L and return %.
+- **Real-money tracking** — record the purchases you actually make (optionally
+  linked to the recommendation that drove them).  FIFO cost basis, gain/loss
+  and *estimated* tax liability classified by holding period (≤365d
+  short-term / >365d long-term) at your configured rates.  Estimates, not
+  tax advice; wash sales not yet handled.
 - **Monitoring** — a nightly job (APScheduler + manual `POST /jobs/refresh`)
   refreshes prices, screens the universe, grades every call at 30/90/180 days
   against `^GSPC`, evaluates alerts and writes the daily equity snapshot.

@@ -32,7 +32,7 @@ def recommendations_page(request: Request, status: str | None = None,
         board = scoreboard(session).overall
         counts = {
             s: session.query(Recommendation).filter_by(status=s).count()
-            for s in ("open", "hit_stop", "hit_target", "closed", "expired")
+            for s in ("open", "hit_stop", "hit_target", "closed", "expired", "dismissed")
         }
     return templates.TemplateResponse(
         request=request, name="recommendations.html",
@@ -48,6 +48,19 @@ def close_recommendation(rec_id: int):
         rec = session.get(Recommendation, rec_id)
         if rec is not None and rec.status == "open":
             rec.status = "closed"
+            rec.closed_at = dt.datetime.now(dt.timezone.utc)
+        session.commit()
+    return JSONResponse({}, headers={"HX-Redirect": "/recommendations"})
+
+
+@router.post("/recommendations/{rec_id}/dismiss")
+def dismiss_recommendation(rec_id: int):
+    """User chose *not* to act on the call - tracked so the scoreboard can
+    later answer whether ignoring it was the right call."""
+    with session_scope() as session:
+        rec = session.get(Recommendation, rec_id)
+        if rec is not None and rec.status == "open":
+            rec.status = "dismissed"
             rec.closed_at = dt.datetime.now(dt.timezone.utc)
         session.commit()
     return JSONResponse({}, headers={"HX-Redirect": "/recommendations"})

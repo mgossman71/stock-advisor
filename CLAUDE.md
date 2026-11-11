@@ -34,12 +34,17 @@ bash scripts/bootstrap.sh      # .venv (Python 3.11/3.12), install deps, migrate
 .venv/bin/python -m app.cli research AAPL [--refresh]   # full report + calls
 .venv/bin/python -m app.cli trade buy AAPL 10 [--fetch] # paper order
 .venv/bin/python -m app.cli adjust-cash 500 [--withdraw] [--note ...]  # cash in/out, not a trade
+.venv/bin/python -m app.cli record-buy AAPL 10 210.50 [--date --rec N --commission --note]  # real trade
+.venv/bin/python -m app.cli record-sell ... # same args; sells cannot exceed the real ledger
+.venv/bin/python -m app.cli holdings                   # real lots + gain/loss + est tax
 .venv/bin/python -m app.cli portfolio                  # marks + day snapshot
 ```
 
 Table names (get these right): `tickers`, `price_history`, `fundamentals`,
-`news_items`, `analyst_actions`, `earnings_events`, `data_fetch_log`, plus the
-trading/advice tables declared in the models but not exercised yet.
+`news_items`, `analyst_actions`, `earnings_events`, `data_fetch_log`,
+`cash_adjustments` (paper cash deposits/withdrawals), `real_trades` (the
+user's real-broker ledger feeding `app/tracking/` FIFO + tax estimates),
+plus the other trading/advice tables declared in the models.
 
 ## Tests that must stay green
 

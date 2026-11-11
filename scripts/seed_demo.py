@@ -87,11 +87,65 @@ def main() -> int:
         except Exception as exc:
             print(f"research {symbol} failed: {exc}")
 
+    with session_scope() as session:
+        seed_real_trades(session, end)
+        session.commit()
+
     print(f"\naccount cash={account.cash_balance} opened id={account.id}")
     if failures:
         print(f"WARNING: {len(failures)} symbol(s) not fetched: {', '.join(failures)}")
         return 0  # partial seed is still a usable demo; caller decides
     return 0
+
+
+def seed_real_trades(session, end: dt.date) -> None:
+    """A few real-money trades so the Investments page has content on first load.
+
+    Prices are the *stored* closes for these tickers (never invented); dates
+    are picked ~420+ days back for one lot so the long-term/short-term split
+    is visible.  Idempotent: skipped when the ledger already has trades.
+    """
+    from decimal import Decimal
+
+    from sqlalchemy import func, select
+
+    from app.db.models import PriceHistory, RealTrade, Ticker
+    from app.tracking import record_trade
+
+    if session.scalar(select(func.count(RealTrade.id))):
+        print("real trades: ledger already populated, skipped")
+        return
+    seeded: list[str] = []
+    for ticker_id in session.scalars(
+        select(PriceHistory.ticker_id)
+        .where(PriceHistory.date <= end - dt.timedelta(days=420))
+        .distinct()
+    ).all():
+        symbol = session.get(Ticker, ticker_id).symbol
+        old = session.scalars(
+            select(PriceHistory)
+            .where(PriceHistory.ticker_id == ticker_id,
+                   PriceHistory.date <= end - dt.timedelta(days=420))
+            .order_by(PriceHistory.date.desc()).limit(1)
+        ).first()
+        recent = session.scalars(
+            select(PriceHistory)
+            .where(PriceHistory.ticker_id == ticker_id,
+                   PriceHistory.date <= end - dt.timedelta(days=35))
+            .order_by(PriceHistory.date.desc()).limit(1)
+        ).first()
+        if old is None or recent is None:
+            continue
+        record_trade(session, symbol, "buy", Decimal("10"), old.close,
+                     trade_date=old.date, note="seeded demo lot")
+        record_trade(session, symbol, "buy", Decimal("5"), recent.close,
+                     trade_date=recent.date, note="seeded demo lot")
+        record_trade(session, symbol, "sell", Decimal("3"), recent.close,
+                     trade_date=recent.date, note="seeded demo trim")
+        seeded.append(symbol)
+        if len(seeded) == 2:
+            break
+    print(f"seeded real trades for: {', '.join(seeded) or '(nothing suitable)'}")
 
 
 def provider_names_or_all(provider) -> list[str]:

@@ -1,0 +1,128 @@
+{% extends "base.html" %}
+{% set nav = "investments" %}
+{% block title %}My Investments — Stock Advisor{% endblock %}
+{% block content %}
+<h1>My Investments</h1>
+<p class="muted">
+  Real purchases you made off the advice — recorded fills, FIFO cost basis,
+  gain/loss by holding period and <b>estimated</b> tax liability
+  (&le;365d short-term, &gt;365d long-term). Estimates at your configured
+  rates, not tax advice; wash-sale rules are not applied yet.
+</p>
+
+{% if flash %}<p class="flash-ok">{{ flash }}</p>{% endif %}
+{% if err %}<p class="flash-bad">{{ err }}</p>{% endif %}
+
+<div class="panels">
+  <div class="panel">
+    <h2>Summary <span class="muted">as of {{ today }}</span></h2>
+    <div style="display:flex; gap:1.5rem; flex-wrap:wrap">
+      <div class="kpi">{{ summary.cost_basis|money }}<small>cost basis</small></div>
+      <div class="kpi">{{ summary.market_value|money }}<small>market value</small></div>
+      <div class="kpi {{ 'pos' if summary.unrealized > 0 else 'neg' if summary.unrealized < 0 }}">{{ summary.unrealized|money }}<small>unrealized G/L</small></div>
+      <div class="kpi">{{ summary.est_tax_if_sold_today|money }}<small>est. tax if sold today</small></div>
+      <div class="kpi">{{ summary.est_tax_realized|money }}<small>est. tax on realized</small></div>
+    </div>
+    {% if summary.unrealized_unmarked > 0 %}
+    <p class="muted">{{ summary.unrealized_unmarked|money }} of cost sits in unpriced
+      tickers — excluded from G/L until bars land.</p>
+    {% endif %}
+  </div>
+  <div class="panel">
+    <h2>Record a trade <span class="muted">what you actually did at your broker</span></h2>
+    <form method="post" action="/investments/trade" class="inline">
+      <select name="symbol" required>
+        {% for s in symbols %}
+        <option value="{{ s }}" {{ 'selected' if prefill and prefill.symbol == s }}>{{ s }}</option>
+        {% endfor %}
+      </select>
+      <select name="side" required>
+        {% for s in ['buy','sell'] %}
+        <option value="{{ s }}" {{ 'selected' if prefill and prefill.side == s }}>{{ s|upper }}</option>
+        {% endfor %}
+      </select>
+      <input name="qty" type="number" step="any" min="0.000001" placeholder="qty"
+             value="{{ prefill.qty if prefill else '' }}" style="width:6rem" required>
+      <input name="price" type="number" step="any" min="0.000001" placeholder="fill price"
+             value="{{ prefill.price if prefill else '' }}" style="width:7rem" required>
+      <input name="trade_date" type="date" value="{{ today }}">
+      <input name="commission" type="number" step="any" min="0" placeholder="comm"
+             value="0" style="width:5rem">
+      <input name="note" placeholder="note" value="{{ prefill.note if prefill else '' }}"
+             style="width:10rem">
+      {% if prefill %}<input type="hidden" name="recommendation_id" value="{{ prefill.recommendation_id }}">{% endif %}
+      <button class="btn" type="submit">Record</button>
+    </form>
+    <form method="post" action="/investments/rates" class="inline" style="margin-top:.75rem">
+      <label>ST rate % <input name="short_term_pct" value="{{ rates.short * 100 }}" style="width:5rem"></label>
+      <label>LT rate % <input name="long_term_pct" value="{{ rates.long * 100 }}" style="width:5rem"></label>
+      <button class="btn secondary" type="submit">Save tax rates</button>
+    </form>
+  </div>
+</div>
+
+<div class="panel" style="margin-top:1rem">
+  <h2>Open lots <span class="muted">FIFO; tax if sold today by holding period</span></h2>
+  <table>
+    <tr><th>Ticker</th><th>Bought</th><th class="num">Held</th><th>Class</th>
+        <th class="num">Qty</th><th class="num">Cost basis</th><th class="num">Last</th>
+        <th>Mark as of</th><th class="num">Gain/(loss)</th><th class="num">Est. tax if sold</th></tr>
+    {% for v in lots %}
+    <tr>
+      <td>{{ v.symbol }}</td>
+      <td class="muted">{{ v.trade_date }}</td>
+      <td class="num">{{ v.held_days }}</td>
+      <td><span class="pill {{ 'bearish' if v.klass == 'short' else 'bullish' }}">{{ v.klass|upper }}</span></td>
+      <td class="num">{{ v.qty }}</td>
+      <td class="num">{{ v.cost_basis|money }}</td>
+      <td class="num">{{ v.price|price if v.price is not none else "—" }}</td>
+      <td class="muted">{{ v.price_date if v.price_date else "unpriced" }}</td>
+      {% set g = v.unrealized %}
+      <td class="num {{ 'pos' if g and g > 0 else 'neg' if g and g < 0 else 'muted' }}">{{ g|money if g is not none else "—" }}</td>
+      <td class="num">{{ v.est_tax_if_sold|money if v.est_tax_if_sold is not none else "—" }}</td>
+    </tr>
+    {% else %}
+    <tr><td colspan="10" class="muted">No real trades recorded yet. Use the form above,
+      or hit "I bought this" on a recommendation.</td></tr>
+    {% endfor %}
+  </table>
+</div>
+
+<div class="panel" style="margin-top:1rem">
+  <h2>Realized so far <span class="muted">FIFO matches, classified at sale date</span></h2>
+  <table>
+    <tr><th></th><th class="num">Gains</th><th class="num">Losses</th></tr>
+    <tr><td>Short-term (≤365d)</td>
+        <td class="num pos">{{ summary.st_gain_real|money }}</td>
+        <td class="num neg">{{ summary.st_loss_real|money }}</td></tr>
+    <tr><td>Long-term (&gt;365d)</td>
+        <td class="num pos">{{ summary.lt_gain_real|money }}</td>
+        <td class="num neg">{{ summary.lt_loss_real|money }}</td></tr>
+  </table>
+  <p>Estimated tax on realized:
+    <b>{{ summary.est_tax_realized|money }}</b>
+    <span class="muted">(ST {{ rates.short * 100 }}% / LT {{ rates.long * 100 }}%)</span></p>
+</div>
+
+<div class="panel" style="margin-top:1rem">
+  <h2>Real trade history</h2>
+  <table>
+    <tr><th>Trade date</th><th>Side</th><th>Ticker</th><th class="num">Qty</th>
+        <th class="num">Price</th><th class="num">Commission</th><th>Call</th><th>Note</th></tr>
+    {% for t in trades %}
+    <tr>
+      <td>{{ t.trade_date }}</td>
+      <td><span class="pill {{ 'bullish' if t.side == 'buy' else 'bearish' }}">{{ t.side|upper }}</span></td>
+      <td>{{ t.ticker.symbol }}</td>
+      <td class="num">{{ t.qty }}</td>
+      <td class="num">{{ t.price|price }}</td>
+      <td class="num">{{ t.commission|money }}</td>
+      <td>{% if t.recommendation_id %}<a href="/recommendations?status=open">#{{ t.recommendation_id }}</a>{% else %}—{% endif %}</td>
+      <td class="muted">{{ t.note or "" }}</td>
+    </tr>
+    {% else %}
+    <tr><td colspan="8" class="muted">Nothing recorded yet.</td></tr>
+    {% endfor %}
+  </table>
+</div>
+{% endblock %}
