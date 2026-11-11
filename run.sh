@@ -5,4 +5,4 @@ set -euo pipefail
 cd "$(dirname "$0")"
 bash scripts/bootstrap.sh
 .venv/bin/python -m scripts.seed_demo
-exec .venv/bin/python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
+exec .venv/bin/python -m uvicorn app.main:app --host 0.0.0.0 --port 9000

@@ -3,7 +3,7 @@
 VENV ?= .venv
 PY := $(VENV)/bin/python
 
-## Container stack (recommended): build + serve on :8000, DB in a named volume
+## Container stack (recommended): build + serve on :9000, DB in a named volume
 up:
 	docker compose up -d --build
 
@@ -26,10 +26,10 @@ docker-logs:
 clean-db-docker:
 	docker compose down -v
 
-## Bring up everything: venv -> deps -> migrate -> seed -> serve on :8000
+## Bring up everything: venv -> deps -> migrate -> seed -> serve on :9000
 dev: bootstrap
 	$(PY) -m scripts.seed_demo
-	$(PY) -m uvicorn app.main:app --host 127.0.0.1 --port 8000
+	$(PY) -m uvicorn app.main:app --host 0.0.0.0 --port 9000
 
 ## Create venv, install deps, write .env, run migrations (idempotent)
 bootstrap:
@@ -48,7 +48,7 @@ test:
 	$(PY) -m pytest
 
 run:
-	$(PY) -m uvicorn app.main:app --host 127.0.0.1 --port 8000
+	$(PY) -m uvicorn app.main:app --host 0.0.0.0 --port 9000
 
 ## Quick data check, e.g. `make fetch TICKER=AAPL`
 fetch:

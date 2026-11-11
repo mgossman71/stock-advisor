@@ -18,8 +18,8 @@ screener, outcomes), `app/jobs.py` (the nightly pipeline + alerts), and
 ## Commands
 
 ```bash
-make dev                       # bootstrap -> seed (REAL data, slow once) -> uvicorn :8000
-make up                        # docker compose up -d --build -> http://localhost:8000
+make dev                       # bootstrap -> seed (REAL data, slow once) -> uvicorn 0.0.0.0:9000
+make up                        # docker compose up -d --build -> http://localhost:9000
 make down                      # stop the stack
 make clean-db-docker           # down -v: ALSO deletes the database volume
 make docker-stats              # stats as the container sees them (volume, not ./data)
@@ -31,7 +31,7 @@ rm -f data/stock_advisor.db* && make migrate    # rebuild the local DB from scra
 bash scripts/bootstrap.sh      # .venv (Python 3.11/3.12), install deps, migrate — idempotent
 .venv/bin/python -m scripts.seed_demo   # seed real history for SEED_SYMBOLS (idempotent)
 
-.venv/bin/python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
+.venv/bin/python -m uvicorn app.main:app --host 0.0.0.0 --port 9000
 .venv/bin/python -m app.cli providers / stats / fetch AAPL --period 1y
 .venv/bin/python -m app.cli research AAPL [--refresh]   # full report + calls
 .venv/bin/python -m app.cli trade buy AAPL 10 [--fetch] [--limit 95]  # paper order
@@ -146,8 +146,9 @@ the README whenever these change), `test_report.py`/`test_advisor.py`
   `payload.llm_error`. `seed_demo` deliberately stays on `RuleBasedAdvisor`.
   Tests inject a fake client; `test_llm_advisor.py` pins the guards.
 - **Writes refuse cross-site requests** (`same_origin_writes` in
-  `app/main.py`): no login exists, so this is the only CSRF guard.  Compose
-  publishes the port on `127.0.0.1` only for the same reason.
+  `app/main.py`): no login exists, so this is the only CSRF guard.  The app listens
+  on `0.0.0.0:9000` (local and compose) by the user's choice, so it is
+  reachable from the LAN with no auth.
 - `data/stock_advisor.db*` is git-ignored — delete it and `make migrate` for a clean rebuild.
 - A real `.env` may hold `FRED_API_KEY`; never print its value.
 - **Scheduler ownership:** the app container arms APScheduler (nightly cron);

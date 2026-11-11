@@ -69,9 +69,9 @@ local script — it keeps working even when CDN scripts are blocked.
 ## Setup
 
 ```bash
-make dev          # venv -> deps -> migrate -> seed (real data) -> serve on :8000
+make dev          # venv -> deps -> migrate -> seed (real data) -> serve on :9000
 # or the container stack (DB in a named volume, NOT ./data):
-make up           # docker compose up -d --build -> http://localhost:8000
+make up           # docker compose up -d --build -> http://localhost:9000
 make test         # pytest, no network, ~1s
 ```
 

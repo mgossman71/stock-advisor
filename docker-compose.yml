@@ -1,6 +1,6 @@
 # Local stack for stock-advisor.
 #
-#   docker compose up -d --build      # build + serve on http://localhost:8000
+#   docker compose up -d --build      # build + serve on http://<host>:9000
 #   docker compose run --rm ingest    # fetch 1y of AAPL into the same volume
 #   docker compose logs -f app
 #
@@ -37,9 +37,9 @@ services:
   app:
     <<: *app
     ports:
-      # Loopback only: the app has no login, so it must not be reachable from
-      # the LAN.  Change deliberately (and add auth) if you need remote access.
-      - "127.0.0.1:8000:8000"
+      # All interfaces: reachable from the LAN.  The app has no login, so
+      # anyone on the network can use it (record trades, change settings).
+      - "0.0.0.0:9000:9000"
     init: true
     restart: unless-stopped
     healthcheck:
@@ -48,7 +48,7 @@ services:
           "CMD",
           "python",
           "-c",
-          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=3)",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:9000/healthz', timeout=3)",
         ]
       interval: 30s
       timeout: 5s

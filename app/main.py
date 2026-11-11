@@ -47,7 +47,7 @@ async def same_origin_writes(request: Request, call_next):
     """Refuse state-changing requests sent from another site (CSRF guard).
 
     There is no login, so any web page the user visits could otherwise POST
-    to ``localhost:8000`` and record trades.  Browsers stamp cross-site
+    to the app and record trades.  Browsers stamp cross-site
     requests with ``Origin``/``Sec-Fetch-Site``; requests with neither (curl,
     the test client, the CLI) are not browser-forged and pass.
     """
