@@ -42,7 +42,7 @@
     <h2>Top ideas today <span class="muted">ranked by confidence, one per ticker</span></h2>
     <table>
       <tr><th class="num">#</th><th>Side</th><th>Ticker</th><th class="num">Conf</th>
-          <th class="num">Entry <span class="muted">as of</span></th>
+          <th class="num">Entry @ call</th><th class="num">Last</th>
           <th class="num">Stop</th><th class="num">Target</th>
           <th class="num">Suggested qty</th><th>Already held</th><th></th></tr>
       {% for idea in open_recs %}
@@ -54,6 +54,8 @@
         <td class="num">{{ rec.confidence }}</td>
         <td class="num">{{ rec.entry_price_at_call|price }}
             <span class="muted" style="font-size:.75rem">{{ rec.generated_at|as_of }}</span></td>
+        <td class="num">{{ idea.last_price|price if idea.last_price is not none else "—" }}
+            <span class="muted" style="font-size:.75rem">{{ idea.last_price_date if idea.last_price_date else "no bars" }}</span></td>
         <td class="num">{{ rec.stop_price|price }}</td>
         <td class="num">{{ rec.target_price|price }}</td>
         <td class="num">{{ idea.suggested_qty if idea.suggested_qty else "—" }}</td>
@@ -68,7 +70,7 @@
         </td>
       </tr>
       {% else %}
-      <tr><td colspan="10" class="muted">No open calls yet — run the screen (Screen page) or the refresh job.</td></tr>
+      <tr><td colspan="11" class="muted">No open calls yet — run the screen (Screen page) or the refresh job.</td></tr>
       {% endfor %}
     </table>
   </div>

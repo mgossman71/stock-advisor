@@ -42,16 +42,20 @@
 <div class="panel" style="margin-top:1rem">
   <table>
     <tr><th>Generated</th><th>Side</th><th>Ticker</th><th class="num">Conf</th>
-        <th class="num">Entry</th><th>Status</th><th class="num">α30 / α90 / α180</th>
+        <th class="num">Entry @ call</th><th class="num">Last</th>
+        <th>Status</th><th class="num">α30 / α90 / α180</th>
         <th>Rationale (cited)</th><th></th></tr>
     {% for rec in recs %}
     {% set o = rec.outcome %}
+    {% set p = prices.get(rec.id) %}
     <tr>
       <td class="muted">{{ rec.generated_at|as_of }}</td>
       <td><span class="pill {{ 'bullish' if rec.direction == 'long' else 'bearish' }}">{{ rec.direction|upper }}</span></td>
       <td><a href="/research/{{ rec.ticker.symbol }}">{{ rec.ticker.symbol }}</a></td>
       <td class="num">{{ rec.confidence }}</td>
       <td class="num">{{ rec.entry_price_at_call|price }}</td>
+      <td class="num">{{ p[0]|price if p else "—" }}
+          <span class="muted" style="font-size:.75rem">{{ p[1] if p else "no bars" }}</span></td>
       <td>{{ rec.status }}</td>
       <td class="num mono">
         {% if o %}{{ o.alpha_30d if o.alpha_30d is not none else "—" }} /
@@ -75,8 +79,11 @@
       </td>
     </tr>
     {% else %}
-    <tr><td colspan="9" class="muted">No recommendations. Run a screen on the Screen page.</td></tr>
+    <tr><td colspan="10" class="muted">No recommendations. Run a screen on the Screen page.</td></tr>
     {% endfor %}
   </table>
+  <p class="muted" style="margin-top:.5rem"><b>Entry @ call</b> is the close on the day the call was
+    generated; <b>Last</b> is the newest stored close with its date - what the ticker trades at now,
+    per the data (never a live quote, never a guess).</p>
 </div>
 {% endblock %}

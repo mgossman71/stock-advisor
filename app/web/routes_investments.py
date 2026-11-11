@@ -15,6 +15,7 @@ from app.db.base import session_scope
 from app.db.models import RealTrade, Recommendation, Ticker
 from app.tracking import RealTradeError, lot_valuations, record_trade, tax_summary
 from app.tracking.taxes import TaxRateError, get_tax_rates, set_tax_rates
+from app.trading.orders import latest_price
 from app.web.common import DISCLAIMER, templates
 
 router = APIRouter()
@@ -40,11 +41,14 @@ def investments_page(request: Request, rec: int | None = None,
         if rec:
             call = session.get(Recommendation, rec)
             if call is not None:
+                priced = latest_price(session, call.ticker_id)
                 prefill = {
                     "symbol": call.ticker.symbol,
                     "side": "buy",  # v1 real ledger is long-only; shorts stay paper
                     "qty": qty or 10,
-                    "price": str(call.entry_price_at_call),
+                    # Prefill with the newest close, not the (possibly stale)
+                    # call price - the user edits it to their actual fill anyway.
+                    "price": str(priced[0]) if priced else str(call.entry_price_at_call),
                     "recommendation_id": call.id,
                     "note": f"executed call #{call.id}",
                 }

@@ -90,3 +90,19 @@ def test_suggested_qty_uses_risk_sizing(session):
     # budget = total_value * risk_pct, qty = floor(budget / (100-90)): exact
     # relationship checked via a second sizing call in app.trading.sizing.
     assert idea.suggested_qty and idea.suggested_qty > 0
+
+
+def test_last_price_attached_from_stored_bars(session):
+    """Entry @ call vs Last: the newest stored close, or None (never a guess)."""
+    from app.db.models import PriceHistory
+
+    t = ensure_ticker(session, "PX")
+    session.add(PriceHistory(ticker_id=t.id, date=dt.date(2026, 1, 2),
+                             close=D("101.5"), source="fake"))
+    session.flush()
+    _rec(session, "PX", "80")
+    _rec(session, "BARE", "70")
+    ideas = {i.symbol: i for i in ranked_ideas(session)}
+    assert ideas["PX"].last_price == D("101.5")
+    assert ideas["PX"].last_price_date == dt.date(2026, 1, 2)
+    assert ideas["BARE"].last_price is None

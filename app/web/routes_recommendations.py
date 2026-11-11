@@ -11,6 +11,7 @@ from app.config import get_settings
 from app.db.base import session_scope
 from app.db.models import Recommendation
 from app.research.outcomes import scoreboard
+from app.trading.orders import latest_price
 from app.web.common import DISCLAIMER, templates
 
 router = APIRouter()
@@ -34,6 +35,9 @@ def recommendations_page(request: Request, status: str | None = None,
         recs = query.limit(200).all()
         for rec in recs:
             _ = (rec.ticker.symbol, rec.outcome)  # load inside session
+        # Latest *stored* close per call: "Entry @ call" is the price at call
+        # time, "Last" is what the data says it trades at now (never a guess).
+        prices = {rec.id: latest_price(session, rec.ticker_id) for rec in recs}
         board = scoreboard(session).overall
         counts = {
             s: session.query(Recommendation).filter_by(status=s).count()
@@ -43,7 +47,8 @@ def recommendations_page(request: Request, status: str | None = None,
         request=request, name="recommendations.html",
         context={"disclaimer": DISCLAIMER, "recs": recs, "board": board,
                  "counts": counts, "status": status, "direction": direction,
-                 "sort": sort, "benchmark": settings.benchmark_symbol},
+                 "sort": sort, "prices": prices,
+                 "benchmark": settings.benchmark_symbol},
     )
 
 

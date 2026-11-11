@@ -10,6 +10,7 @@ suggested size from :mod:`app.trading.sizing`.
 
 from __future__ import annotations
 
+import datetime as dt
 from dataclasses import dataclass
 from decimal import Decimal
 
@@ -18,6 +19,7 @@ from sqlalchemy.orm import Session
 
 from app.config import Settings
 from app.db.models import Account, Position, RealTrade, Recommendation
+from app.trading.orders import latest_price
 from app.trading.sizing import suggested_size
 from app.trading.snapshots import portfolio_values
 
@@ -31,6 +33,10 @@ class RankedIdea:
     held: str | None
     #: Risk-based quantity for the paper account (None when unpriced/short-call)
     suggested_qty: int | None
+    #: Latest *stored* close for the ticker (never a guess): what it trades
+    #: at now, vs the entry price captured when the call was made.
+    last_price: Decimal | None = None
+    last_price_date: dt.date | None = None
 
 
 def _held_map(session: Session) -> dict[int, str]:
@@ -92,8 +98,11 @@ def ranked_ideas(
         if account is not None and total_value and rec.stop_price:
             qty = suggested_size(total_value, rec.entry_price_at_call,
                                  rec.stop_price, settings=settings)
+        priced = latest_price(session, rec.ticker_id)
         ideas.append(RankedIdea(
             rank=rank, rec=rec, symbol=rec.ticker.symbol,
             held=held.get(rec.ticker_id), suggested_qty=qty,
+            last_price=priced[0] if priced else None,
+            last_price_date=priced[1] if priced else None,
         ))
     return ideas
