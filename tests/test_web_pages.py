@@ -457,3 +457,15 @@ def test_price_refresh_result_is_summarised(client, monkeypatch):
     html = client.get("/jobs/status?watching=1").text
     assert "Price refresh done:" in html and "priced 2 / 3" in html
     assert "limit orders filled=1" in html and "1 price error(s)" in html
+
+
+def test_full_refresh_fetches_news_by_default(client, monkeypatch):
+    """The AI screen reads news/analyst actions/earnings: the button must fetch them."""
+    seen: list[dict] = []
+    monkeypatch.setattr("app.web.routes_jobs.run_pipeline",
+                        lambda progress, **kw: seen.append(kw))
+    monkeypatch.setattr("app.web.routes_jobs.runner.start",
+                        lambda name, job: job(None) or True)
+    client.post("/jobs/refresh")
+    client.post("/jobs/refresh", data={"with_alternatives": "0"})
+    assert [kw["with_alternatives"] for kw in seen] == [True, False]

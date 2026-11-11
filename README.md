@@ -91,8 +91,9 @@ kill them.
 (paper positions, real holdings, pending orders, alerts, open calls,
 watchlist, benchmark), then fills limit orders, re-marks positions and
 checks alerts. It takes seconds. **Full refresh** is the whole nightly pass:
-history, fundamentals and news for the entire universe, then a re-screen.
-It takes minutes.
+history, fundamentals, news, analyst actions and earnings for the entire
+universe, then a re-screen (one AI-analyst call per stock when "also in the
+nightly screen" is ticked). It takes minutes.
 
 **Auto-refresh** (Settings → Auto-refresh, off by default) runs either job,
 prices only by default, every 5 min to 12 h. It can be limited to US

@@ -30,8 +30,14 @@ def job_status_response(request: Request, *, watching: bool = True):
 
 @router.post("/jobs/refresh")
 def jobs_refresh(request: Request, max_symbols: int | None = Form(None),
-                 with_alternatives: bool = Form(False)):
-    """Start the pipeline (or, if a job is already running, show its progress)."""
+                 with_alternatives: bool = Form(True)):
+    """Start the pipeline (or, if a job is already running, show its progress).
+
+    News, analyst actions and earnings are fetched by default, like the
+    nightly pass - the AI analyst's screen reads them, and without this a
+    manual Full refresh judged fresh prices against stale news.
+    ``with_alternatives=0`` opts out.
+    """
     runner.start("refresh", lambda progress: run_pipeline(
         progress, max_symbols=max_symbols, with_alternatives=bool(with_alternatives)))
     return job_status_response(request)
