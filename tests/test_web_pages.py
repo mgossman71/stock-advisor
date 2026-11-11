@@ -484,9 +484,10 @@ def test_recommendations_show_what_is_already_held(client, monkeypatch):
         s.commit()
 
     html = client.get("/recommendations").text
-    assert ">PAPER LONG 10</span>" in html
-    assert ">REAL 2.5</span>" in html
-    assert html.count('class="pill held"') == 2, "SHT/CLS are not held: no tag"
+    assert "<th>You hold</th>" in html
+    assert ">10 paper</td>" in html
+    assert ">2.5 real</td>" in html
+    assert html.count('data-label="You hold" class="held"') == 2, "SHT/CLS are not held"
 
     only_held = client.get("/recommendations?held=yes").text
     assert "/research/PRC" in only_held and "/research/AMC" in only_held

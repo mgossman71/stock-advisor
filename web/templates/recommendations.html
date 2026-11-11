@@ -47,7 +47,7 @@
 <div class="panel" style="margin-top:1rem">
   <div class="tablewrap">
   <table class="wide cards">
-    <tr class="head"><th>Generated</th><th>Side</th><th>Ticker</th><th class="num">Conf</th>
+    <tr class="head"><th>Generated</th><th>Side</th><th>Ticker</th><th>You hold</th><th class="num">Conf</th>
         <th class="num">Entry @ call</th><th class="num">Last</th>
         <th>Status</th><th class="num">α30 / α90 / α180</th>
         <th>Rationale (cited)</th><th class="actions">Actions</th></tr>
@@ -57,10 +57,9 @@
     <tr>
       <td class="muted" style="white-space:nowrap" data-label="Generated">{{ rec.generated_at.strftime('%Y-%m-%d') }}</td>
       <td data-label="Side"><span class="pill {{ 'bullish' if rec.direction == 'long' else 'bearish' }}">{{ rec.direction|upper }}</span></td>
-      <td data-label="Ticker"><a href="/research/{{ rec.ticker.symbol }}">{{ rec.ticker.symbol }}</a>
-        {% for label in holdings.get(rec.ticker_id, []) %}
-        <br><span class="pill held" title="you hold this now ({{ 'paper account' if label.startswith('PAPER') else 'real money' }})">{{ label }}</span>
-        {% endfor %}</td>
+      <td data-label="Ticker"><a href="/research/{{ rec.ticker.symbol }}">{{ rec.ticker.symbol }}</a></td>
+      {% set h = holdings.get(rec.ticker_id) %}
+      <td data-label="You hold" class="{{ 'held' if h else 'muted' }}" style="white-space:nowrap">{{ h|join(' · ') if h else '—' }}</td>
       <td class="num" data-label="Conf">{{ rec.confidence }}</td>
       <td class="num" data-label="Entry @ call">{{ rec.entry_price_at_call|price }}</td>
       <td class="num" data-label="Last">{{ p[0]|price if p else "—" }}
@@ -95,15 +94,15 @@
       </td>
     </tr>
     {% else %}
-    <tr><td colspan="10" class="muted">No recommendations. Run a screen on the Screen page.</td></tr>
+    <tr><td colspan="11" class="muted">No recommendations. Run a screen on the Screen page.</td></tr>
     {% endfor %}
   </table>
   </div>
   <p class="muted" style="margin-top:.5rem"><b>Entry @ call</b> is the close on the day the call was
     generated; <b>Last</b> is the newest stored close with its date - what the ticker trades at now,
     per the data (never a live quote, never a guess).</p>
-  <p class="muted"><b>PAPER LONG/SHORT n</b> under a ticker = your open paper position;
-    <b>REAL n</b> = shares you hold for real (Investments page).</p>
+  <p class="muted"><b>You hold</b> = your open paper position (<i>paper</i>, or <i>paper short</i>)
+    and shares you own for real (<i>real</i>, from the Investments page), as of now.</p>
   <p class="muted"><b>Buttons:</b> <b>simulate</b> = a virtual order in the paper account (fake
     money, practice only); <b>I bought it</b> = you actually purchased this stock with real money -
     it goes in your real ledger with gain/loss and estimated tax; <b>close</b> = end the call

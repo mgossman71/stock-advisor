@@ -25,21 +25,21 @@ def _shares(qty: Decimal) -> str:
 
 
 def holdings_by_ticker(session) -> dict[int, list[str]]:
-    """ticker_id -> labels for what is held now: paper position, real lots."""
+    """ticker_id -> what is held now, e.g. ["10 paper", "25 real"]."""
     held: dict[int, list[str]] = {}
     paper: dict[int, Decimal] = {}
     for position in session.query(Position).filter(Position.qty != 0):
         paper[position.ticker_id] = paper.get(position.ticker_id, Decimal(0)) + position.qty
     for ticker_id, qty in paper.items():
         if qty:
-            side = "SHORT" if qty < 0 else "LONG"
-            held.setdefault(ticker_id, []).append(f"PAPER {side} {_shares(abs(qty))}")
+            label = "paper short" if qty < 0 else "paper"
+            held.setdefault(ticker_id, []).append(f"{_shares(abs(qty))} {label}")
     real: dict[int, Decimal] = {}
     for lot in open_lots(session):
         real[lot.trade.ticker_id] = real.get(lot.trade.ticker_id, Decimal(0)) + lot.remaining
     for ticker_id, qty in real.items():
         if qty:
-            held.setdefault(ticker_id, []).append(f"REAL {_shares(qty)}")
+            held.setdefault(ticker_id, []).append(f"{_shares(qty)} real")
     return held
 
 
