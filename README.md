@@ -73,7 +73,33 @@ make dev          # venv -> deps -> migrate -> seed (real data) -> serve on :900
 # or the container stack (DB in a named volume, NOT ./data):
 make up           # docker compose up -d --build -> http://localhost:9000
 make test         # pytest, no network, ~1s
+make set-password # (or `make docker-set-password`) - required, see below
 ```
+
+### Password protection
+
+Every page and API needs a login except `/login`, `/healthz` and
+`/static/`. Until a password is set the app is **locked**: it shows only the
+login page with instructions. Set one (12+ characters):
+
+```bash
+make set-password            # local DB  (.venv/bin/python -m app.cli set-password)
+make docker-set-password     # container (docker compose exec app python -m app.cli set-password)
+```
+
+Re-running it changes the password and signs out every existing session.
+The password is stored as a salted scrypt hash in `app_settings`; the session
+is an HMAC-signed, `HttpOnly`, `SameSite=Lax` cookie valid for 14 days ("Sign
+out" in the top bar ends it). After 10 failed logins in 15 minutes, logins
+from that address are refused for the rest of the window.
+
+**Putting it on the internet:** the app speaks plain http, so put a
+TLS-terminating reverse proxy in front of it (Caddy is the simplest:
+`caddy reverse-proxy --from stocks.example.com --to localhost:9000`), or use
+a Cloudflare Tunnel, and set `SESSION_COOKIE_SECURE=1` so the cookie is only
+ever sent over https. Without https the password and cookie travel in clear
+text. Behind a proxy, every client shares the proxy's address, so the
+failed-login limit then applies to everyone at once.
 
 `make dev` runs `scripts/seed_demo.py`, which fetches **>= 2 years of real
 price history** for the 19 `SEED_SYMBOLS` plus `^GSPC` and `^VIX`, then
@@ -96,6 +122,7 @@ Copy `.env.example` to `.env`. Nothing secret is ever in code.
 | `BENCHMARK_SYMBOL` / `VIX_SYMBOL` | grading + regime panel | `^GSPC` / `^VIX` |
 | `NIGHTLY_CRON` | APScheduler cron (UTC) | `15 21 * * *` |
 | `SCHEDULER_ENABLED` | set `0` in one-shot containers | `true` |
+| `SESSION_COOKIE_SECURE` | force the cookie's `Secure` flag (set behind a TLS proxy) | `false` |
 
 ## How the scoring works (exact thresholds)
 
@@ -187,7 +214,7 @@ pages — a call with an unfinished window is *not graded*, not "0".
 ## Tests
 
 ```
-make test   # 277 tests, <4s, no network
+make test   # 289 tests, <4s, no network
 ```
 
 Pinned invariants: P&L math (incl. shorts + borrow), scoring thresholds

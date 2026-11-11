@@ -1,4 +1,4 @@
-.PHONY: dev bootstrap migrate revision seed test run clean fetch up down docker-fetch docker-stats docker-logs clean-db-docker
+.PHONY: dev bootstrap migrate revision seed test run clean fetch up down docker-fetch docker-stats docker-logs clean-db-docker set-password docker-set-password
 
 VENV ?= .venv
 PY := $(VENV)/bin/python
@@ -18,6 +18,10 @@ docker-fetch:
 ## Stats from inside the container (reads the volume, not ./data)
 docker-stats:
 	docker compose run --rm ingest python -m app.cli stats
+
+## Set the web login password inside the running container (prompts)
+docker-set-password:
+	docker compose exec app python -m app.cli set-password
 
 docker-logs:
 	docker compose logs -f app
@@ -49,6 +53,10 @@ test:
 
 run:
 	$(PY) -m uvicorn app.main:app --host 0.0.0.0 --port 9000
+
+## Set the web login password for the local DB (prompts)
+set-password:
+	$(PY) -m app.cli set-password
 
 ## Quick data check, e.g. `make fetch TICKER=AAPL`
 fetch:

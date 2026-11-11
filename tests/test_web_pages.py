@@ -32,11 +32,12 @@ from app.db.models import PriceHistory, Recommendation
 from app.ingestion.ingest import ensure_ticker
 
 BASE = dt.datetime(2026, 1, 5, 12, tzinfo=dt.timezone.utc)
+TEST_PASSWORD = "correct horse battery staple"
 
 
 @pytest.fixture
 def client(tmp_path, monkeypatch):
-    """TestClient bound to a throwaway DB, scheduler off."""
+    """Signed-in TestClient bound to a throwaway DB, scheduler off."""
     db_path = tmp_path / "web_test.db"
     monkeypatch.setenv("DATABASE_URL", f"sqlite:///{db_path}")
     monkeypatch.setenv("SCHEDULER_ENABLED", "0")
@@ -50,7 +51,15 @@ def client(tmp_path, monkeypatch):
     # network, so by default no quote is available (override per test).
     monkeypatch.setattr("app.web.routes_portfolio.order_provider",
                         lambda settings: FakeProvider())
+    from app import auth
+
+    with session_scope() as s:
+        auth.set_password(s, TEST_PASSWORD)
+        s.commit()
+    auth.throttle.reset()
     with TestClient(app) as c:
+        assert c.post("/login", data={"password": TEST_PASSWORD},
+                      follow_redirects=False).status_code == 303
         yield c
     dispose_all()
     get_settings.cache_clear()

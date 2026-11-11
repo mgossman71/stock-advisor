@@ -25,7 +25,7 @@ make clean-db-docker           # down -v: ALSO deletes the database volume
 make docker-stats              # stats as the container sees them (volume, not ./data)
 make docker-fetch TICKER=MSFT  # one-shot fetch into the container's volume
 
-make test                      # .venv/bin/python -m pytest -q -> 277 tests, <4s, no network
+make test                      # .venv/bin/python -m pytest -q -> 289 tests, <4s, no network
 make migrate                   # alembic upgrade head
 rm -f data/stock_advisor.db* && make migrate    # rebuild the local DB from scratch
 bash scripts/bootstrap.sh      # .venv (Python 3.11/3.12), install deps, migrate — idempotent
@@ -39,6 +39,7 @@ bash scripts/bootstrap.sh      # .venv (Python 3.11/3.12), install deps, migrate
 .venv/bin/python -m app.cli adjust-cash 500 [--withdraw] [--note ...]  # cash in/out, not a trade
 .venv/bin/python -m app.cli record-buy AAPL 10 210.50 [--date --rec N --commission --note]  # real trade
 .venv/bin/python -m app.cli record-sell ... # same args; sells cannot exceed the real ledger
+.venv/bin/python -m app.cli set-password               # web login (required; stdin ok)
 .venv/bin/python -m app.cli holdings                   # real lots + gain/loss + est tax
 .venv/bin/python -m app.cli portfolio                  # marks + day snapshot
 ```
@@ -145,10 +146,15 @@ the README whenever these change), `test_report.py`/`test_advisor.py`
   and any model failure persists the plain rules report with
   `payload.llm_error`. `seed_demo` deliberately stays on `RuleBasedAdvisor`.
   Tests inject a fake client; `test_llm_advisor.py` pins the guards.
+- **Password login** (`app/auth.py`, `require_login` in `app/main.py`): every
+  route except `/login`, `/healthz`, `/static/` needs the `sa_session` cookie.
+  Fails closed - no password set means locked, and there is deliberately no
+  auth-off switch (the app is internet-facing on `0.0.0.0:9000`). Hash and
+  session secret live in `app_settings`; `set-password` rotates the secret.
+  The login throttle keys on the socket peer, never `X-Forwarded-For`. Web
+  tests' `client` fixture signs in; `tests/test_auth.py` uses a signed-out one.
 - **Writes refuse cross-site requests** (`same_origin_writes` in
-  `app/main.py`): no login exists, so this is the only CSRF guard.  The app listens
-  on `0.0.0.0:9000` (local and compose) by the user's choice, so it is
-  reachable from the LAN with no auth.
+  `app/main.py`): the CSRF guard, alongside the `SameSite=Lax` cookie.
 - `data/stock_advisor.db*` is git-ignored — delete it and `make migrate` for a clean rebuild.
 - A real `.env` may hold `FRED_API_KEY`; never print its value.
 - **Scheduler ownership:** the app container arms APScheduler (nightly cron);

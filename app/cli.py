@@ -13,12 +13,14 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+import getpass
 import logging
 import sys
 from decimal import Decimal
 
 from sqlalchemy import func, select
 
+from app import auth
 from app.config import get_settings
 from app.db.base import dispose_all, session_scope
 from app.db.models import Fundamentals, PriceHistory, Ticker
@@ -352,6 +354,26 @@ def cmd_research(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_set_password(args: argparse.Namespace) -> int:
+    """Set the web login password (prompted; or one line on stdin)."""
+    if sys.stdin.isatty():
+        password = getpass.getpass("new password: ")
+        if getpass.getpass("repeat: ") != password:
+            print("passwords do not match")
+            return 1
+    else:
+        password = sys.stdin.readline().rstrip("\n")
+    with session_scope() as session:
+        try:
+            auth.set_password(session, password)
+        except ValueError as exc:
+            print(exc)
+            return 1
+        session.commit()
+    print("password set; every existing web session is now signed out")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     """Assemble the argparse tree."""
     parser = argparse.ArgumentParser(prog="app.cli", description="Stock advisor data tools")
@@ -419,6 +441,9 @@ def build_parser() -> argparse.ArgumentParser:
     research.add_argument("symbol")
     research.add_argument("--refresh", action="store_true", help="fetch fresh data first")
     research.set_defaults(func=cmd_research)
+
+    sub.add_parser("set-password", help="set the web login password").set_defaults(
+        func=cmd_set_password)
     return parser
 
 

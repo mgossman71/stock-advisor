@@ -27,6 +27,9 @@
     <form hx-post="/jobs/refresh" hx-target="#job-result" hx-swap="innerHTML" class="jobform">
       <button type="submit" class="btn secondary">Run refresh job</button>
     </form>
+    <form method="post" action="/logout" class="jobform">
+      <button type="submit" class="btn quiet">Sign out</button>
+    </form>
   </header>
   <div class="disclaimer" role="note">{{ disclaimer }}</div>
   <div id="job-result"></div>

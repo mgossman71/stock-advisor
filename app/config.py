@@ -32,6 +32,11 @@ class Settings(BaseSettings):
     app_name: str = "Stock Advisor"
     debug: bool = False
 
+    #: Force the ``Secure`` flag on the session cookie.  It is set
+    #: automatically when the request arrives over https; turn this on when a
+    #: TLS-terminating proxy forwards plain http to the app.
+    session_cookie_secure: bool = False
+
     # --- database ----------------------------------------------------------
     database_url: str = "sqlite:///./data/stock_advisor.db"
 

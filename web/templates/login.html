@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex, nofollow">
+  <title>Sign in — Stock Advisor</title>
+  <link rel="stylesheet" href="/static/app.css?v=6">
+</head>
+<body>
+  <header class="topbar"><span class="brand">Stock&nbsp;Advisor</span></header>
+  <main>
+    <div class="panels">
+      <div class="panel">
+        <h2>Sign in</h2>
+        {% if error %}<p class="flash-bad">{{ error }}</p>{% endif %}
+        {% if configured %}
+        <form method="post" action="/login" class="inline">
+          <input type="hidden" name="next" value="{{ next }}">
+          <label>password <input type="password" name="password" autocomplete="current-password"
+            autofocus required></label>
+          <button class="btn" type="submit">Sign in</button>
+        </form>
+        {% else %}
+        <p>No password is set, so the app is locked. Set one on the server
+          (at least {{ min_length }} characters):</p>
+        <p class="mono">.venv/bin/python -m app.cli set-password</p>
+        <p class="mono">docker compose exec app python -m app.cli set-password</p>
+        {% endif %}
+      </div>
+    </div>
+  </main>
+</body>
+</html>

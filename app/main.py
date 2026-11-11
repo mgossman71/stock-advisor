@@ -10,15 +10,16 @@ from __future__ import annotations
 
 import datetime as dt
 import logging
-from urllib.parse import urlsplit
+from urllib.parse import quote, urlsplit
 
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import HTMLResponse, PlainTextResponse
+from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import select, text
 
+from app import auth
 from app.config import BASE_DIR, get_settings
 from app.db.base import session_scope
 from app.ingestion.stats import coverage_by_ticker, recent_fetch_log, table_counts
@@ -46,7 +47,7 @@ _UNSAFE_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
 async def same_origin_writes(request: Request, call_next):
     """Refuse state-changing requests sent from another site (CSRF guard).
 
-    There is no login, so any web page the user visits could otherwise POST
+    The session cookie alone would let any web page the user visits POST
     to the app and record trades.  Browsers stamp cross-site
     requests with ``Origin``/``Sec-Fetch-Site``; requests with neither (curl,
     the test client, the CLI) are not browser-forged and pass.
@@ -62,6 +63,33 @@ async def same_origin_writes(request: Request, call_next):
         if origin == "null":
             return PlainTextResponse("cross-site request refused", status_code=403)
     return await call_next(request)
+
+
+_PUBLIC_PATHS = {"/login", "/healthz"}
+
+
+@app.middleware("http")
+async def require_login(request: Request, call_next):
+    """Every route needs a valid session cookie except login, healthz, static.
+
+    Registered after ``same_origin_writes`` so it runs first.  Fails closed:
+    no password set -> nothing but the login page (which says how to set one).
+    """
+    path = request.url.path
+    if path in _PUBLIC_PATHS or path.startswith("/static/"):
+        return await call_next(request)
+    with session_scope() as session:
+        _password_hash, secret = auth.load_auth(session)
+    if auth.check_token(request.cookies.get(auth.COOKIE_NAME), secret):
+        return await call_next(request)
+    target = path + (f"?{request.url.query}" if request.url.query else "")
+    login = f"/login?next={quote(target, safe='/')}"
+    if path.startswith("/api/"):
+        return JSONResponse({"detail": "login required"}, status_code=401)
+    if request.headers.get("hx-request"):
+        return PlainTextResponse("login required", status_code=401,
+                                 headers={"HX-Redirect": login})
+    return RedirectResponse(login, status_code=303)
 
 
 def _cron_trigger(expression: str) -> CronTrigger:

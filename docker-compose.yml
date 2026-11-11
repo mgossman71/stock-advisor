@@ -22,6 +22,9 @@ x-app: &app
     # "auto" = yfinance -> nasdaq -> fred. Pin one (yfinance|nasdaq|fred) to debug fallbacks.
     MARKET_DATA_PROVIDER: ${MARKET_DATA_PROVIDER:-auto}
     DEBUG: ${DEBUG:-false}
+    # Set to 1 when a TLS proxy (Caddy, nginx, Cloudflare Tunnel) forwards
+    # plain http to the app, so the session cookie is only sent over https.
+    SESSION_COOKIE_SECURE: ${SESSION_COOKIE_SECURE:-0}
   # Lets the container reach a self-hosted LLM on the host at
   # http://host.docker.internal:<port> (built in on Docker Desktop; this
   # line makes it work on Linux too).
@@ -37,8 +40,9 @@ services:
   app:
     <<: *app
     ports:
-      # All interfaces: reachable from the LAN.  The app has no login, so
-      # anyone on the network can use it (record trades, change settings).
+      # All interfaces.  Every page needs the login password (set it with
+      # `make docker-set-password`); serve it over https before exposing it
+      # to the internet - the app itself speaks plain http.
       - "0.0.0.0:9000:9000"
     init: true
     restart: unless-stopped

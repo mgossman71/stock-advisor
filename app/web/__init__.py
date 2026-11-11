@@ -1,6 +1,7 @@
 """Every page router, in nav order."""
 
 from app.web.routes_alerts import router as alerts_router
+from app.web.routes_auth import router as auth_router
 from app.web.routes_dashboard import router as dashboard_router
 from app.web.routes_investments import router as investments_router
 from app.web.routes_jobs import router as jobs_router
@@ -20,4 +21,5 @@ routers = [
     alerts_router,
     settings_router,
     jobs_router,
+    auth_router,
 ]
