@@ -224,3 +224,79 @@ def test_a_single_revised_bar_is_not_mistaken_for_a_split(session):
     assert not any(n.startswith("split") for n in stats.notes)
     assert session.scalar(select(PriceHistory).where(PriceHistory.date == MID)).close \
         == Decimal("101.50")
+
+
+# --- intraday bars: a session's bar is only final once New York has closed ---
+
+INTRADAY = dt.datetime(2026, 1, 9, 15, 0, tzinfo=dt.timezone.utc)      # Fri 10:00 EST
+AFTER_CLOSE = dt.datetime(2026, 1, 9, 21, 30, tzinfo=dt.timezone.utc)  # Fri 16:30 EST
+
+
+def _clock(monkeypatch, when: dt.datetime) -> None:
+    from app.ingestion import ingest
+    monkeypatch.setattr(ingest, "now_utc", lambda: when)
+
+
+def _live_quote(price: str, when: dt.datetime = INTRADAY):
+    from app.providers.base import Quote
+    return Quote(symbol="AAPL", price=Decimal(price), as_of=when)
+
+
+def test_session_closed_follows_new_york_time():
+    from app.ingestion.ingest import session_closed
+    friday = dt.date(2026, 1, 9)
+    assert not session_closed(friday, INTRADAY)
+    assert not session_closed(friday, dt.datetime(2026, 1, 9, 21, 14, tzinfo=dt.timezone.utc))
+    assert session_closed(friday, dt.datetime(2026, 1, 9, 21, 15, tzinfo=dt.timezone.utc))
+    assert session_closed(dt.date(2026, 1, 8), INTRADAY)
+    # 01:00 UTC Saturday is still Friday evening in New York - closed, not "future"
+    assert session_closed(friday, dt.datetime(2026, 1, 10, 1, 0, tzinfo=dt.timezone.utc))
+    # summer: 16:15 EDT = 20:15 UTC
+    assert session_closed(dt.date(2026, 7, 15),
+                          dt.datetime(2026, 7, 15, 20, 15, tzinfo=dt.timezone.utc))
+
+
+def test_intraday_bar_is_provisional_and_later_refreshes_update_the_price(session, monkeypatch):
+    """Regression: the first intraday refresh froze the day's price - history
+    looked fresh and the live quote refused to touch the 'settled' bar."""
+    from app.ingestion.ingest import ingest_quote
+
+    _clock(monkeypatch, INTRADAY)
+    ingest_history(session, _provider(), "AAPL", START, END)
+    session.commit()
+    today = session.scalar(select(PriceHistory).where(PriceHistory.date == END))
+    assert today.provisional, "a still-forming bar must not count as settled"
+    assert not session.scalar(select(PriceHistory).where(PriceHistory.date == MID)).provisional
+
+    again = ingest_history(session, _provider(), "AAPL", START, END)
+    assert again.written == 3, "an intraday bar must not make the range look fresh"
+
+    stats, _ = ingest_quote(session, FakeProvider(quote=_live_quote("105.75")), "AAPL")
+    session.flush()
+    assert stats.written == 1
+    row = session.scalar(select(PriceHistory).where(PriceHistory.date == END))
+    assert (row.close, row.provisional) == (Decimal("105.75"), True)
+
+    _clock(monkeypatch, AFTER_CLOSE)
+    final = [*BARS[:2], make_bar(date=END, close="106.10", open=Decimal("102"),
+                                 high=Decimal("107"), low=Decimal("101"), volume=900)]
+    ingest_history(session, FakeProvider(bars=final), "AAPL", START, END)
+    session.flush()
+    row = session.scalar(select(PriceHistory).where(PriceHistory.date == END))
+    assert (row.close, row.high, row.provisional) == (Decimal("106.10"), Decimal("107"), False)
+    assert ingest_history(session, FakeProvider(bars=final), "AAPL", START, END).written == 0
+
+
+def test_an_intraday_bar_stored_as_settled_before_the_fix_is_healed(session, monkeypatch):
+    """Databases written before the guard hold today's bar as settled."""
+    from app.ingestion.ingest import ingest_quote
+
+    _clock(monkeypatch, AFTER_CLOSE)          # writes END as settled, like the old code
+    ingest_history(session, _provider(), "AAPL", START, END)
+    session.commit()
+    _clock(monkeypatch, INTRADAY)
+    assert ingest_history(session, _provider(), "AAPL", START, END).written == 3
+    stats, _ = ingest_quote(session, FakeProvider(quote=_live_quote("104.00")), "AAPL")
+    session.flush()
+    row = session.scalar(select(PriceHistory).where(PriceHistory.date == END))
+    assert stats.written == 1 and row.close == Decimal("104.00")

@@ -10,6 +10,10 @@ Idempotency rules (the nightly job calls this constantly, and
   quiet.  Quote-priced (``provisional``) rows never count as fresh, otherwise
   one live quote would stop real bars from ever being fetched again.
 * A live quote never overwrites a settled bar for the same date.
+* A bar is only *settled* once its New York session has closed
+  (``session_closed``).  Yahoo's daily history includes the still-forming
+  bar for today; stored as settled it made history look fresh and blocked
+  every later quote, freezing intraday prices at the first refresh of the day.
 * A re-fetched range that disagrees with storage by a clean split factor
   triggers ``app.ingestion.splits.apply_split`` before the upsert.
 * Every provider call writes exactly one ``data_fetch_log`` row with status
@@ -22,6 +26,7 @@ import datetime as dt
 import time
 from dataclasses import dataclass, field
 from decimal import Decimal
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -35,6 +40,25 @@ from app.providers.base import (
     Bar, EarningsEvent as EarningsPayload, FundamentalsSnapshot, MarketDataProvider,
     NewsHeadline, ProviderResult, Quote, Side,
 )
+
+NEW_YORK = ZoneInfo("America/New_York")
+#: A day's bar counts as final this long after the 16:00 close.
+SESSION_SETTLES_AT = dt.time(16, 15)
+
+
+def now_utc() -> dt.datetime:
+    """The ingestion clock (tests monkeypatch it to pin intraday vs after-close)."""
+    return dt.datetime.now(dt.timezone.utc)
+
+
+def session_closed(day: dt.date, now: dt.datetime | None = None) -> bool:
+    """True once the New York session for ``day`` is over (bar is final).
+
+    No holiday calendar, like ``app/trading/freshness``: a holiday has no
+    bar, so there is nothing to misclassify.
+    """
+    local = (now or now_utc()).astimezone(NEW_YORK)
+    return day < local.date() or (day == local.date() and local.time() >= SESSION_SETTLES_AT)
 
 
 @dataclass
@@ -139,7 +163,8 @@ def ingest_history(
 
     low, high, count = covered_range(session, ticker.id, start, end)
     settled = latest_settled_date(session, ticker.id, end)
-    if settled is not None and settled >= end - dt.timedelta(days=freshness_days):
+    if (settled is not None and settled >= end - dt.timedelta(days=freshness_days)
+            and session_closed(settled)):  # rows from before the guard may be intraday
         log_fetch(
             session, provider=provider.name, endpoint=f"history({symbol})",
             ticker=symbol, status="skipped_fresh", row_count=count,
@@ -179,10 +204,13 @@ def ingest_history(
                        source=result.provider) is not None:
             stats.note(f"split {split_to}:{split_from} detected effective {split_date}"
                        " - older bars, positions and calls rescaled")
+    now = now_utc()
     for bar in result.data:
         # Provenance is taken from the result envelope, not the bar: a provider
         # that forgets to stamp ``Bar.source`` cannot mislabel stored rows.
-        _upsert_bar(session, ticker.id, bar, existing, source=result.provider)
+        # Today's still-forming bar is provisional until the session closes.
+        _upsert_bar(session, ticker.id, bar, existing, source=result.provider,
+                    provisional=not session_closed(bar.date, now))
         stats.written += 1
     stats.fetched = result.row_count
     log_fetch(
@@ -302,7 +330,7 @@ def ingest_quote(
         )
     }
     settled = existing.get(today)
-    if settled is not None and not settled.provisional:
+    if settled is not None and not settled.provisional and session_closed(today):
         # The day's real bar already landed; a quote must not replace it
         # (it would wipe OHLC and could pin an intraday price as the close).
         log_fetch(session, provider=result.provider, endpoint=result.endpoint,
