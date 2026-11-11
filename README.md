@@ -1,7 +1,9 @@
 # Stock Advisor
 
 Personal research + paper-trading app. FastAPI / SQLAlchemy / Jinja2 + HTMX +
-Alpine.js + Chart.js / SQLite (Alembic-migrated, Postgres-portable).
+Alpine.js + Chart.js / SQLite (Alembic-migrated, Postgres-portable). Behavior
+that matters (rationale disclosure, trade-cost readout) uses native HTML or a
+local script — it keeps working even when CDN scripts are blocked.
 
 > **Educational simulation — not financial advice. No real orders are placed.**
 
@@ -11,20 +13,32 @@ Alpine.js + Chart.js / SQLite (Alembic-migrated, Postgres-portable).
   fallbacks), scores five transparent blocks, and writes an evidence-backed
   report per ticker. Missing data renders as *unavailable* — never invented.
 - **Recommendations** — a rule-based engine emits ranked LONG/SHORT calls with
-  rationale, stop/target and confidence. Every call cites its data.  The
-  dashboard's "Top ideas today" list ranks open calls by confidence (one per
-  ticker, newest wins) and tags tickers you already hold in the real or
-  paper ledger.
-- **Paper trading** — one account, market/limit-style simulated fills at the
-  latest stored close ± slippage, full short support with borrow accrual,
-  risk-per-trade position sizing.  You set the balance: deposits/withdrawals
-  (`adjust-cash` or the portfolio page) are booked in an auditable
-  `cash_adjustments` ledger and excluded from daily P&L and return %.
-- **Real-money tracking** — record the purchases you actually make (optionally
-  linked to the recommendation that drove them).  FIFO cost basis, gain/loss
-  and *estimated* tax liability classified by holding period (≤365d
-  short-term / >365d long-term) at your configured rates.  Estimates, not
-  tax advice; wash sales not yet handled.
+   plain-English, evidence-cited rationale (e.g. `Value: EV/EBITDA of 8.98
+   scores 94.26/100 - lower numbers are better (8 earns 100, 25 earns 0)`),
+   stop/target and confidence. Rows show **Entry @ call** (price when the call
+   was generated) next to **Last** (newest stored close + date — never a live
+   quote, never a guess). Per-call actions: **simulate** (paper order),
+   **I bought it** (record the real purchase it drove), **close**, **dismiss**
+   (ignored calls are kept so the scoreboard can grade the decision). The
+   dashboard's "Top ideas today" list ranks open calls by confidence (one per
+   ticker, newest wins) and tags tickers you already hold in either ledger.
+- **Paper trading (Portfolio page — fake money)** — one account, market/
+   limit-style simulated fills at the
+   latest stored close ± slippage, full short support with borrow accrual,
+   risk-per-trade position sizing.  The order ticket shows a live
+   **est. trade cost** (qty × latest close; prefilled server-side, so it is
+   correct even with JS disabled).  You set the balance: deposits/withdrawals
+   (`adjust-cash` or the portfolio page) are booked in an auditable
+   `cash_adjustments` ledger and excluded from daily P&L and return %.
+- **Real-money tracking (Investments page — actual money)** — record the
+   purchases you actually make (optionally linked to the recommendation that
+   drove them).  The two ledgers are deliberately separate: simulated fills
+   never appear here, keeping real cost basis and tax estimates clean.
+   FIFO cost basis, gain/loss
+   and *estimated* tax liability classified by holding period (≤365d
+   short-term / >365d long-term) at your configured rates; the trade form
+   shows the live **cost of this trade** (qty × fill price).  Estimates, not
+   tax advice; wash sales not yet handled.
 - **Monitoring** — a nightly job (APScheduler + manual `POST /jobs/refresh`)
   refreshes prices, screens the universe, grades every call at 30/90/180 days
   against `^GSPC`, evaluates alerts and writes the daily equity snapshot.
@@ -114,9 +128,20 @@ pages — a call with an unfinished window is *not graded*, not "0".
 ## Tests
 
 ```
-make test   # 173 tests, <2s, no network
+make test   # 211 tests, <3s, no network
 ```
 
-Pinned invariants: P&L math (incl. shorts + borrow), scoring thresholds,
+Pinned invariants: P&L math (incl. shorts + borrow), scoring thresholds
+(incl. negative/implausible multiples excluded, never "cheap"),
 no-fabrication (missing fields stay NULL / render "unavailable"), ingestion
 idempotency, Alembic-vs-models schema parity, 30d alpha with fixtures.
+
+The **web layer** has its own suite (`tests/test_web_pages.py`) because the
+recurring bugs lived in templates/CSS, which unit tests could not see: every
+page renders; every table row's colspan-sum matches its header; the action-
+button contract per open call (simulate / I bought it / close / dismiss,
+retired labels forbidden); every class the templates emit has a rule in
+`app.css`; the stylesheet link stays cache-busted; rationale stays a native
+`<details>` (no CDN-JS dependency); paper fills land on Portfolio and never
+in Investments; both tickets expose live cost readouts that work server-side
+without JavaScript.
