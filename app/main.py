@@ -17,7 +17,9 @@ from urllib.parse import quote, urlsplit
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse
+from fastapi.responses import (
+    FileResponse, HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse,
+)
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import select, text
 
@@ -67,7 +69,7 @@ async def same_origin_writes(request: Request, call_next):
     return await call_next(request)
 
 
-_PUBLIC_PATHS = {"/login", "/setup", "/healthz"}
+_PUBLIC_PATHS = {"/login", "/setup", "/healthz", "/favicon.ico"}
 
 
 @app.middleware("http")
@@ -133,6 +135,14 @@ def stop_scheduler() -> None:
     if scheduler is not None:
         autorefresh.set_scheduler(None)
         scheduler.shutdown(wait=False)
+
+
+@app.get("/favicon.ico", include_in_schema=False)
+def favicon() -> FileResponse:
+    """Browsers ask for /favicon.ico on their own; serve it without a login."""
+    return FileResponse(BASE_DIR / "web" / "static" / "favicon.ico",
+                        media_type="image/x-icon",
+                        headers={"Cache-Control": "public, max-age=604800"})
 
 
 @app.get("/healthz")

@@ -151,6 +151,9 @@ def test_every_route_but_login_health_static_is_locked(anon):
     _set()
     assert anon.get("/healthz").status_code == 200
     assert anon.get("/static/app.css").status_code == 200
+    icon = anon.get("/favicon.ico")
+    assert icon.status_code == 200 and icon.headers["content-type"] == "image/x-icon"
+    assert anon.get("/static/favicon.svg").status_code == 200
     assert anon.get("/login").status_code == 200
     for path in ("/", "/settings", "/research/AAPL", "/portfolio", "/docs"):
         resp = anon.get(path, follow_redirects=False)
