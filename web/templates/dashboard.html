@@ -38,9 +38,10 @@
 </div>
 
 <div class="panels">
-  <div class="panel">
+  <div class="panel" style="grid-column: 1 / -1">
     <h2>Top ideas today <span class="muted">ranked by confidence, one per ticker</span></h2>
-    <table>
+    <div class="tablewrap">
+    <table class="wide">
       <tr><th class="num">#</th><th>Side</th><th>Ticker</th><th class="num">Conf</th>
           <th class="num">Entry @ call</th><th class="num">Last</th>
           <th class="num">Stop</th><th class="num">Target</th>
@@ -53,7 +54,7 @@
         <td><a href="/research/{{ idea.symbol }}">{{ idea.symbol }}</a></td>
         <td class="num">{{ rec.confidence }}</td>
         <td class="num">{{ rec.entry_price_at_call|price }}
-            <span class="muted" style="font-size:.75rem">{{ rec.generated_at|as_of }}</span></td>
+            <span class="muted" style="font-size:.75rem">{{ rec.generated_at.strftime('%Y-%m-%d') }}</span></td>
         <td class="num">{{ idea.last_price|price if idea.last_price is not none else "—" }}
             <span class="muted" style="font-size:.75rem">{{ idea.last_price_date if idea.last_price_date else "no bars" }}</span></td>
         <td class="num">{{ rec.stop_price|price }}</td>
@@ -75,7 +76,11 @@
       <tr><td colspan="11" class="muted">No open calls yet — run the screen (Screen page) or the refresh job.</td></tr>
       {% endfor %}
     </table>
+    </div>
   </div>
+</div>
+
+<div class="panels">
   <div class="panel">
     <h2>Scoreboard (self-graded)</h2>
     <table>

@@ -63,7 +63,8 @@
 
 <div class="panel" style="margin-top:1rem">
   <h2>Open lots <span class="muted">FIFO; tax if sold today by holding period</span></h2>
-  <table>
+  <div class="tablewrap">
+  <table class="wide">
     <tr><th>Ticker</th><th>Bought</th><th class="num">Held</th><th>Class</th>
         <th class="num">Qty</th><th class="num">Cost basis</th><th class="num">Last</th>
         <th>Mark as of</th><th class="num">Gain/(loss)</th><th class="num">Est. tax if sold</th></tr>
@@ -86,6 +87,7 @@
       or hit "I bought this" on a recommendation.</td></tr>
     {% endfor %}
   </table>
+  </div>
 </div>
 
 <div class="panel" style="margin-top:1rem">

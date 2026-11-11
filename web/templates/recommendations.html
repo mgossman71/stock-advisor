@@ -40,7 +40,8 @@
 </div>
 
 <div class="panel" style="margin-top:1rem">
-  <table>
+  <div class="tablewrap">
+  <table class="wide">
     <tr><th>Generated</th><th>Side</th><th>Ticker</th><th class="num">Conf</th>
         <th class="num">Entry @ call</th><th class="num">Last</th>
         <th>Status</th><th class="num">α30 / α90 / α180</th>
@@ -49,7 +50,7 @@
     {% set o = rec.outcome %}
     {% set p = prices.get(rec.id) %}
     <tr>
-      <td class="muted">{{ rec.generated_at|as_of }}</td>
+      <td class="muted" style="white-space:nowrap">{{ rec.generated_at.strftime('%Y-%m-%d') }}</td>
       <td><span class="pill {{ 'bullish' if rec.direction == 'long' else 'bearish' }}">{{ rec.direction|upper }}</span></td>
       <td><a href="/research/{{ rec.ticker.symbol }}">{{ rec.ticker.symbol }}</a></td>
       <td class="num">{{ rec.confidence }}</td>
@@ -62,7 +63,7 @@
                  {{ o.alpha_90d if o.alpha_90d is not none else "—" }} /
                  {{ o.alpha_180d if o.alpha_180d is not none else "—" }}
         {% else %}—{% endif %}</td>
-      <td class="muted" style="max-width:24rem">{{ rec.rationale[:160] }}{% if rec.rationale|length > 160 %}…{% endif %}</td>
+      <td class="clamp2">{{ rec.rationale[:160] }}{% if rec.rationale|length > 160 %}…{% endif %}</td>
       <td>
         {% if rec.status == 'open' %}
         <div class="row-actions">
@@ -84,6 +85,7 @@
     <tr><td colspan="10" class="muted">No recommendations. Run a screen on the Screen page.</td></tr>
     {% endfor %}
   </table>
+  </div>
   <p class="muted" style="margin-top:.5rem"><b>Entry @ call</b> is the close on the day the call was
     generated; <b>Last</b> is the newest stored close with its date - what the ticker trades at now,
     per the data (never a live quote, never a guess).</p>
