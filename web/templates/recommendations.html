@@ -72,9 +72,9 @@
       <td>
         {% if rec.status == 'open' %}
         <div class="row-actions">
-          <a class="btn" href="/portfolio?prefill={{ rec.id }}" title="simulate this call in the paper account">paper</a>
+          <a class="btn" href="/portfolio?prefill={{ rec.id }}" title="place a virtual order in the paper account - no real money">simulate</a>
           {% if rec.direction == 'long' %}
-          <a class="btn" href="/investments?rec={{ rec.id }}" title="record a real purchase you actually made, linked to this call">bought</a>
+          <a class="btn" href="/investments?rec={{ rec.id }}" title="record a purchase you actually made with real money - tracked with gain/loss and estimated tax">I bought it</a>
           {% endif %}
           <form hx-post="/recommendations/{{ rec.id }}/close">
             <button class="btn secondary" type="submit" title="close this call manually">close</button>
@@ -94,5 +94,10 @@
   <p class="muted" style="margin-top:.5rem"><b>Entry @ call</b> is the close on the day the call was
     generated; <b>Last</b> is the newest stored close with its date - what the ticker trades at now,
     per the data (never a live quote, never a guess).</p>
+  <p class="muted"><b>Buttons:</b> <b>simulate</b> = a virtual order in the paper account (fake
+    money, practice only); <b>I bought it</b> = you actually purchased this stock with real money -
+    it goes in your real ledger with gain/loss and estimated tax; <b>close</b> = end the call
+    (you took profit/loss or it expired); <b>dismiss</b> = you chose not to act on it (tracked,
+    so the scoreboard can later judge whether ignoring it was right).</p>
 </div>
 {% endblock %}

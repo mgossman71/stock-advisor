@@ -65,9 +65,9 @@
             {% else %}<span class="muted">not acted on</span>{% endif %}</td>
         <td>
           <div class="row-actions">
-            <a class="btn" href="/portfolio?prefill={{ rec.id }}" title="simulate this call in the paper account">paper</a>
+            <a class="btn" href="/portfolio?prefill={{ rec.id }}" title="place a virtual order in the paper account - no real money">simulate</a>
             {% if rec.direction == 'long' %}
-            <a class="btn" href="/investments?rec={{ rec.id }}{% if idea.suggested_qty %}&qty={{ idea.suggested_qty }}{% endif %}" title="record a real purchase you actually made, linked to this call">bought</a>
+            <a class="btn" href="/investments?rec={{ rec.id }}{% if idea.suggested_qty %}&qty={{ idea.suggested_qty }}{% endif %}" title="record a purchase you actually made with real money - tracked with gain/loss and estimated tax">I bought it</a>
             {% endif %}
           </div>
         </td>
@@ -77,6 +77,9 @@
       {% endfor %}
     </table>
     </div>
+    <p class="muted" style="margin-top:.5rem"><b>simulate</b> = virtual order in the paper account
+      (fake money); <b>I bought it</b> = record a purchase you actually made with real money
+      (gain/loss + estimated tax).</p>
   </div>
 </div>
 
