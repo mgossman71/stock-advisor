@@ -11,7 +11,12 @@ a:hover { text-decoration: underline; }
 main { padding: 1rem 1.25rem 2rem; max-width: 1200px; margin: 0 auto; }
 .topbar { display: flex; align-items: center; gap: 1rem; padding: .6rem 1.25rem;
   background: var(--panel); border-bottom: 1px solid var(--line); flex-wrap: wrap; }
-.brand { font-weight: 700; letter-spacing: .3px; }
+.brand { font-weight: 700; letter-spacing: .3px; color: var(--text); }
+.brand:hover { text-decoration: none; }
+.topbar-actions { display: flex; gap: .5rem; align-items: center; margin-left: auto; }
+/* Phone menu toggle: hidden on wide screens (see the media query below). */
+.menu-toggle { position: absolute; opacity: 0; pointer-events: none; }
+.menu-button { display: none; }
 .topbar nav { display: flex; gap: .9rem; flex-wrap: wrap; }
 .topbar nav a { color: var(--muted); }
 .topbar nav a.active { color: var(--text); border-bottom: 2px solid var(--accent); }
@@ -19,9 +24,14 @@ main { padding: 1rem 1.25rem 2rem; max-width: 1200px; margin: 0 auto; }
   font-size: .85rem; border-bottom: 1px solid var(--line); }
 .badge { background: var(--red); color: #fff; border-radius: 9px; padding: 0 .45rem;
   font-size: .75rem; }
-.panels { display: grid; gap: 1rem; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); }
+.panels { display: grid; gap: 1rem;
+  grid-template-columns: repeat(auto-fit, minmax(min(300px, 100%), 1fr)); }
+/* Grid items default to min-width:auto, so one wide table used to stretch the
+   whole column (and the page) past the screen.  min-width:0 keeps panels at
+   their track width; anything wider scrolls inside the panel instead. */
+.panels > * { min-width: 0; }
 .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 8px;
-  padding: .9rem 1rem; }
+  padding: .9rem 1rem; min-width: 0; overflow-x: auto; }
 .panel h2, .panel h3 { margin: 0 0 .6rem; font-size: 1rem; color: var(--muted);
   text-transform: uppercase; letter-spacing: .5px; }
 table { width: 100%; border-collapse: collapse; font-size: .92rem; }
@@ -68,6 +78,7 @@ input, select { background: #0d1117; color: var(--text); border: 1px solid var(-
 form.inline { display: flex; gap: .5rem; align-items: center; flex-wrap: wrap; }
 .jobform { display: flex; gap: .5rem; align-items: center; flex-wrap: wrap; }
 footer { color: var(--muted); font-size: .8rem; padding: 1rem 1.25rem; border-top: 1px solid var(--line); }
+.kpis { display: flex; gap: .75rem 1.5rem; flex-wrap: wrap; }
 .kpi { font-size: 1.5rem; font-weight: 700; }
 .kpi small { display: block; font-size: .75rem; color: var(--muted); font-weight: 400; }
 .job-result { background: var(--panel); border: 1px solid var(--line); border-radius: 8px;
@@ -76,4 +87,72 @@ footer { color: var(--muted); font-size: .8rem; padding: 1rem 1.25rem; border-to
 .evidence li { margin-bottom: .25rem; }
 .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .85rem; }
 canvas { max-width: 100%; }
-@media (max-width: 700px) { .topbar { flex-direction: column; align-items: flex-start; } }
+.chart { position: relative; height: 260px; }
+.regime { display: flex; gap: .5rem 1.5rem; flex-wrap: wrap;
+  font-variant-numeric: tabular-nums; }
+input, select, textarea { max-width: 100%; }
+
+/* ------------------------------------------------------------------ phones */
+@media (max-width: 700px) {
+  body { font-size: 15px; }
+  main { padding: .75rem .75rem 1.5rem; }
+  h1 { font-size: 1.4rem; margin: .4rem 0 .8rem; }
+  .panels { gap: .75rem; }
+  .panel { padding: .75rem; }
+  .panel + .panel, .panels + .panel, .panel + .panels { margin-top: .75rem !important; }
+  .kpi { font-size: 1.2rem; }
+  .chart { height: 200px; }
+  .job-result { margin: .5rem .75rem; }
+  .disclaimer { padding: .35rem .75rem; font-size: .8rem; }
+  footer { padding: .75rem; }
+
+  /* Header: brand + Menu button; nav and actions open as a list. */
+  .topbar { padding: .5rem .75rem; gap: .5rem; }
+  .menu-button { display: inline-flex; align-items: center; margin-left: auto;
+    padding: .45rem .8rem; border: 1px solid var(--line); border-radius: 6px;
+    cursor: pointer; user-select: none; }
+  .topbar nav, .topbar-actions { display: none; width: 100%; }
+  .menu-toggle:checked ~ nav { display: flex; flex-direction: column; gap: 0; }
+  .menu-toggle:checked ~ .topbar-actions { display: flex; flex-wrap: wrap; margin: .25rem 0; }
+  .menu-toggle:checked + .menu-button { border-color: var(--accent); }
+  .menu-toggle:focus-visible + .menu-button { outline: 2px solid var(--accent); }
+  .topbar nav a { padding: .65rem .25rem; border-bottom: 1px solid var(--line); }
+  .topbar nav a.active { border-bottom: 1px solid var(--line); color: var(--accent); }
+
+  /* Touch-sized controls; 16px text stops iOS zooming into fields. */
+  .btn { min-height: 40px; }
+  .row-actions .btn { min-height: 36px; }
+  input, select, textarea { font-size: 16px; min-height: 40px; }
+  input[type="checkbox"], input[type="radio"] { min-height: 0; width: 1.2rem; height: 1.2rem; }
+  form.inline { align-items: stretch; }
+  form.inline label { display: flex; flex: 1 1 100%; align-items: center; gap: .5rem;
+    flex-wrap: wrap; }
+  form.inline label > input:not([type="checkbox"]):not([type="radio"]),
+  form.inline label > select { flex: 1 1 8rem; width: auto !important; min-width: 0; }
+  form.inline > input, form.inline > select { flex: 1 1 100%; width: auto !important; }
+
+  /* Ordinary tables scroll sideways inside their panel instead of squashing
+     every column into a tall, wrapped mess. */
+  .panel table:not(.cards) { width: max-content; min-width: 100%; }
+  .panel table:not(.cards) th, .panel table:not(.cards) td { white-space: nowrap; }
+
+  /* Key tables (top ideas, recommendations) become one card per row: a
+     two-column grid of label-over-value cells, labels from data-label. */
+  table.cards, table.cards tbody { display: block; width: 100%; }
+  table.cards { min-width: 0; }
+  table.cards tr.head { display: none; }
+  table.cards tr { display: grid; grid-template-columns: 1fr 1fr; gap: .45rem 1rem;
+    border: 1px solid var(--line); border-radius: 8px; padding: .6rem .75rem;
+    margin-bottom: .6rem; }
+  table.cards td { display: block; border: 0; padding: 0; text-align: left; min-width: 0; }
+  table.cards td::before { content: attr(data-label); display: block; color: var(--muted);
+    font-size: .75rem; text-transform: uppercase; letter-spacing: .3px; }
+  table.cards td:not([data-label])::before { content: none; }
+  table.cards td.actions, table.cards td[colspan],
+  table.cards td[data-label^="Rationale"] { grid-column: 1 / -1; }
+  table.cards td.actions { width: auto; white-space: normal; padding-top: .25rem; }
+  table.cards .row-actions { flex-wrap: wrap; }
+  table.cards .row-actions > .btn, table.cards .row-actions > form { flex: 1 1 auto; }
+  table.cards .row-actions > .btn { text-align: center; }
+  table.cards details.rationale { max-width: none; }
+}

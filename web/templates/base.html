@@ -7,12 +7,15 @@
   <script src="https://unpkg.com/htmx.org@1.9.12"></script>
   <script defer src="https://unpkg.com/alpinejs@3.14.1/dist/cdn.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
-  <link rel="stylesheet" href="/static/app.css?v=6">
+  <link rel="stylesheet" href="/static/app.css?v=7">
   <script defer src="/static/app.js?v=1"></script>
 </head>
 <body>
   <header class="topbar">
-    <span class="brand">Stock&nbsp;Advisor</span>
+    <a class="brand" href="/">Stock&nbsp;Advisor</a>
+    {# Phone menu: a CSS-only toggle (checkbox + label), so it works with no JS. #}
+    <input type="checkbox" id="menu-toggle" class="menu-toggle" aria-label="Show menu">
+    <label for="menu-toggle" class="menu-button" aria-hidden="true">&#9776; Menu</label>
     <nav>
       <a href="/" class="{{ 'active' if nav == 'dashboard' }}">Dashboard</a>
       <a href="/research" class="{{ 'active' if nav == 'research' }}">Research</a>
@@ -24,12 +27,14 @@
         {% if alert_badge %}<span class="badge">{{ alert_badge }}</span>{% endif %}</a>
       <a href="/settings" class="{{ 'active' if nav == 'settings' }}">Settings</a>
     </nav>
-    <form hx-post="/jobs/refresh" hx-target="#job-result" hx-swap="innerHTML" class="jobform">
-      <button type="submit" class="btn secondary">Run refresh job</button>
-    </form>
-    <form method="post" action="/logout" class="jobform">
-      <button type="submit" class="btn quiet">Sign out</button>
-    </form>
+    <div class="topbar-actions">
+      <form hx-post="/jobs/refresh" hx-target="#job-result" hx-swap="innerHTML" class="jobform">
+        <button type="submit" class="btn secondary">Run refresh job</button>
+      </form>
+      <form method="post" action="/logout" class="jobform">
+        <button type="submit" class="btn quiet">Sign out</button>
+      </form>
+    </div>
   </header>
   <div class="disclaimer" role="note">{{ disclaimer }}</div>
   <div id="job-result" hx-get="/jobs/status" hx-trigger="load"></div>

@@ -15,7 +15,7 @@
 <div class="panels">
   <div class="panel" style="grid-column: 1 / -1">
     <h3>Last 500 closes <span class="muted">(as of {{ report.data_as_of|as_of }})</span></h3>
-    <canvas id="prices" height="80"></canvas>
+    <div class="chart"><canvas id="prices"></canvas></div>
   </div>
 </div>
 
@@ -96,7 +96,7 @@ new Chart(document.getElementById("prices"), {
   data: { labels: series.map(p => p.date),
           datasets: [{ label: "{{ ticker.symbol }} close", data: series.map(p => p.close),
                        borderColor: "#58a6ff", tension: .2 }] },
-  options: { plugins: { legend: { labels: { color: "#e6edf3" } } } },
+  options: { maintainAspectRatio: false, plugins: { legend: { labels: { color: "#e6edf3" } } } },
 });
 </script>
 {% else %}

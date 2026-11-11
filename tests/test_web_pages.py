@@ -174,7 +174,40 @@ def test_wide_tables_are_wrapped_for_horizontal_scroll(client):
     _seed_open_calls()
     html = client.get("/recommendations").text
     assert '<div class="tablewrap">' in html
-    assert '<table class="wide">' in html
+    assert re.search(r'<table class="wide[ "]', html)
+
+
+# ------------------------------------------------------------------- mobile
+
+
+def test_pages_are_set_up_for_phones(client):
+    """Viewport meta + the CSS-only phone menu on every page; the stylesheet
+    has a phone breakpoint that stops grid panels overflowing the screen."""
+    _seed_open_calls()
+    for path in PAGES:
+        html = client.get(path).text
+        assert 'name="viewport" content="width=device-width, initial-scale=1"' in html
+        assert 'id="menu-toggle"' in html and 'for="menu-toggle"' in html, path
+    css = client.get("/static/app.css").text
+    assert "@media (max-width: 700px)" in css
+    assert ".panels > * { min-width: 0; }" in css
+    assert ".menu-toggle:checked ~ nav" in css
+    assert 'name="viewport"' in client.get("/login").text
+
+
+@pytest.mark.parametrize("path", ["/", "/recommendations"])
+def test_card_tables_label_every_data_cell(client, path):
+    """On phones these tables render as cards whose labels come from
+    data-label; every column but Actions needs one, matching the header."""
+    _seed_open_calls()
+    html = client.get(path).text
+    table = html[html.index('<table class="wide cards">'):]
+    table = table[:table.index("</table>")]
+    headers = re.findall(r"<th[^>]*>(.*?)</th>", table, flags=re.S)
+    first_row = table.split("</tr>")[1]
+    labels = re.findall(r'data-label="([^"]*)"', first_row)
+    assert '<tr class="head">' in table
+    assert labels == [re.sub("<[^>]+>", "", h).strip() for h in headers[:-1]], path
 
 
 # ------------------------------------------------------- action-button contract

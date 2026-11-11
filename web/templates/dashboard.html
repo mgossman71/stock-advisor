@@ -5,7 +5,7 @@
 <div class="panels">
   <div class="panel">
     <h2>Account</h2>
-    <div style="display:flex; gap:1.5rem; flex-wrap:wrap">
+    <div class="kpis">
       <div class="kpi">{{ values.total_value|money }}<small>total equity</small></div>
       <div class="kpi">{{ values.cash|money }}<small>cash</small></div>
       <div class="kpi">{{ values.positions_value|money }}<small>positions value</small></div>
@@ -17,14 +17,14 @@
   </div>
   <div class="panel">
     <h2>Equity curve vs {{ settings.benchmark_symbol }}</h2>
-    <canvas id="equity" height="120"></canvas>
+    <div class="chart"><canvas id="equity"></canvas></div>
   </div>
 </div>
 
 <div class="panels">
   <div class="panel" style="grid-column: 1 / -1">
     <h2>Market regime</h2>
-    <div style="display:flex; gap:1.5rem; flex-wrap:wrap" class="num">
+    <div class="regime">
       <span>{{ regime.index_symbol }}: <b>{{ regime.index_last|price }}</b>
         <span class="muted">as of {{ regime.index_as_of|as_of }}</span>
         · SMA50 <span class="{{ 'pos' if regime.index_vs_sma50 == 'above' else 'neg' }}">{{ regime.index_vs_sma50 or "n/a" }}</span>
@@ -41,26 +41,26 @@
   <div class="panel" style="grid-column: 1 / -1">
     <h2>Top ideas today <span class="muted">ranked by confidence, one per ticker</span></h2>
     <div class="tablewrap">
-    <table class="wide">
-      <tr><th class="num">#</th><th>Side</th><th>Ticker</th><th class="num">Conf</th>
+    <table class="wide cards">
+      <tr class="head"><th class="num">#</th><th>Side</th><th>Ticker</th><th class="num">Conf</th>
           <th class="num">Entry @ call</th><th class="num">Last</th>
           <th class="num">Stop</th><th class="num">Target</th>
           <th class="num">Suggested qty</th><th>Already held</th><th class="actions">Actions</th></tr>
       {% for idea in open_recs %}
       {% set rec = idea.rec %}
       <tr>
-        <td class="num muted">{{ idea.rank }}</td>
-        <td><span class="pill {{ 'bullish' if rec.direction == 'long' else 'bearish' }}">{{ rec.direction|upper }}</span></td>
-        <td><a href="/research/{{ idea.symbol }}">{{ idea.symbol }}</a></td>
-        <td class="num">{{ rec.confidence }}</td>
-        <td class="num">{{ rec.entry_price_at_call|price }}
+        <td class="num muted" data-label="#">{{ idea.rank }}</td>
+        <td data-label="Side"><span class="pill {{ 'bullish' if rec.direction == 'long' else 'bearish' }}">{{ rec.direction|upper }}</span></td>
+        <td data-label="Ticker"><a href="/research/{{ idea.symbol }}">{{ idea.symbol }}</a></td>
+        <td class="num" data-label="Conf">{{ rec.confidence }}</td>
+        <td class="num" data-label="Entry @ call">{{ rec.entry_price_at_call|price }}
             <span class="muted" style="font-size:.75rem">{{ rec.generated_at.strftime('%Y-%m-%d') }}</span></td>
-        <td class="num">{{ idea.last_price|price if idea.last_price is not none else "—" }}
+        <td class="num" data-label="Last">{{ idea.last_price|price if idea.last_price is not none else "—" }}
             <span class="muted" style="font-size:.75rem">{{ idea.last_price_date if idea.last_price_date else "no bars" }}</span></td>
-        <td class="num">{{ rec.stop_price|price }}</td>
-        <td class="num">{{ rec.target_price|price }}</td>
-        <td class="num">{{ idea.suggested_qty if idea.suggested_qty else "—" }}</td>
-        <td>{% if idea.held == 'real' %}<span class="pill bullish">REAL</span>
+        <td class="num" data-label="Stop">{{ rec.stop_price|price }}</td>
+        <td class="num" data-label="Target">{{ rec.target_price|price }}</td>
+        <td class="num" data-label="Suggested qty">{{ idea.suggested_qty if idea.suggested_qty else "—" }}</td>
+        <td data-label="Already held">{% if idea.held == 'real' %}<span class="pill bullish">REAL</span>
             {% elif idea.held == 'paper' %}<span class="pill">paper</span>
             {% else %}<span class="muted">not acted on</span>{% endif %}</td>
         <td class="actions">
@@ -125,7 +125,7 @@ new Chart(document.getElementById("equity"), {
       { label: "{{ settings.benchmark_symbol }}", data: curve.map(p => p.spx),
         borderColor: "#8b949e", borderDash: [4,4], tension: .25, yAxisID: "y1" },
     ] },
-  options: { scales: { y: { position: "left" }, y1: { position: "right", grid: { drawOnChartArea: false } } },
+  options: { maintainAspectRatio: false, scales: { y: { position: "left" }, y1: { position: "right", grid: { drawOnChartArea: false } } },
              plugins: { legend: { labels: { color: "#e6edf3" } } } },
 });
 </script>
