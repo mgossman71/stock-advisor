@@ -46,6 +46,10 @@ Table names (get these right): `tickers`, `price_history`, `fundamentals`,
 user's real-broker ledger feeding `app/tracking/` FIFO + tax estimates),
 plus the other trading/advice tables declared in the models.
 
+Ranking rule (`app/research/ranking.py`, deliberate and simple): open calls,
+newest per ticker wins, then confidence DESC — do not blend in scoreboard
+track record without a new decision.
+
 ## Tests that must stay green
 
 `tests/test_migrations.py::test_migration_matches_models` compares the Alembic

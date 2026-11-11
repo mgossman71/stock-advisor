@@ -16,6 +16,10 @@
     <option value="">long + short</option>
     {% for s in ['long','short'] %}<option value="{{ s }}" {{ 'selected' if s == direction }}>{{ s }}</option>{% endfor %}
   </select>
+  <select name="sort">
+    <option value="best" {{ 'selected' if sort == 'best' }}>best first</option>
+    <option value="recent" {{ 'selected' if sort == 'recent' }}>newest first</option>
+  </select>
   <button class="btn" type="submit">Filter</button>
 </form>
 

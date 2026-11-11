@@ -8,9 +8,10 @@ from fastapi import APIRouter, Request
 
 from app.config import get_settings
 from app.db.base import session_scope
-from app.db.models import Alert, Recommendation
+from app.db.models import Alert
 from app.research import indicators
 from app.research.outcomes import Scoreboard, scoreboard as build_scoreboard
+from app.research.ranking import ranked_ideas
 from app.research.report import closes_with_dates
 from app.trading.accounts import get_or_open_account
 from app.trading.snapshots import equity_curve, portfolio_values
@@ -26,12 +27,12 @@ def dashboard(request: Request):
         account = get_or_open_account(session, settings)
         values = portfolio_values(session, account)
         curve = equity_curve(session)
-        open_recs = session.query(Recommendation).filter_by(status="open") \
-            .order_by(Recommendation.confidence.desc()).limit(10).all()
+        open_recs = ranked_ideas(session, account=account, settings=settings,
+                                 limit=10)
         untriggered_alerts = session.query(Alert).filter(
             Alert.acknowledged.is_(False)).order_by(Alert.triggered_at.desc()).limit(12).all()
-        for rec in open_recs:  # materialize lazy relationships inside the session
-            _ = (rec.ticker.symbol, rec.stop_price, rec.target_price)
+        for idea in open_recs:  # materialize lazy relationships inside the session
+            _ = (idea.symbol, idea.rec.stop_price, idea.rec.target_price)
         for alert in untriggered_alerts:
             if alert.ticker is not None:
                 _ = alert.ticker.symbol

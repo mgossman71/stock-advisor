@@ -11,7 +11,10 @@ Alpine.js + Chart.js / SQLite (Alembic-migrated, Postgres-portable).
   fallbacks), scores five transparent blocks, and writes an evidence-backed
   report per ticker. Missing data renders as *unavailable* — never invented.
 - **Recommendations** — a rule-based engine emits ranked LONG/SHORT calls with
-  rationale, stop/target and confidence. Every call cites its data.
+  rationale, stop/target and confidence. Every call cites its data.  The
+  dashboard's "Top ideas today" list ranks open calls by confidence (one per
+  ticker, newest wins) and tags tickers you already hold in the real or
+  paper ledger.
 - **Paper trading** — one account, market/limit-style simulated fills at the
   latest stored close ± slippage, full short support with borrow accrual,
   risk-per-trade position sizing.  You set the balance: deposits/withdrawals

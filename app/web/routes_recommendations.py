@@ -18,10 +18,15 @@ router = APIRouter()
 
 @router.get("/recommendations")
 def recommendations_page(request: Request, status: str | None = None,
-                         direction: str | None = None):
+                         direction: str | None = None, sort: str = "best"):
     settings = get_settings()
     with session_scope() as session:
-        query = session.query(Recommendation).order_by(Recommendation.generated_at.desc())
+        query = session.query(Recommendation)
+        if sort == "recent":
+            query = query.order_by(Recommendation.generated_at.desc())
+        else:  # default: best idea first, newest breaks ties
+            query = query.order_by(Recommendation.confidence.desc(),
+                                   Recommendation.generated_at.desc())
         if status:
             query = query.filter(Recommendation.status == status)
         if direction:
@@ -38,7 +43,7 @@ def recommendations_page(request: Request, status: str | None = None,
         request=request, name="recommendations.html",
         context={"disclaimer": DISCLAIMER, "recs": recs, "board": board,
                  "counts": counts, "status": status, "direction": direction,
-                 "benchmark": settings.benchmark_symbol},
+                 "sort": sort, "benchmark": settings.benchmark_symbol},
     )
 
 
