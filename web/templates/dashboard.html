@@ -63,10 +63,12 @@
             {% elif idea.held == 'paper' %}<span class="pill">paper</span>
             {% else %}<span class="muted">not acted on</span>{% endif %}</td>
         <td>
-          <a class="btn" href="/portfolio?prefill={{ rec.id }}">execute</a>
-          {% if rec.direction == 'long' %}
-          <a class="btn" href="/investments?rec={{ rec.id }}{% if idea.suggested_qty %}&qty={{ idea.suggested_qty }}{% endif %}">I bought this</a>
-          {% endif %}
+          <div class="row-actions">
+            <a class="btn" href="/portfolio?prefill={{ rec.id }}" title="simulate this call in the paper account">paper</a>
+            {% if rec.direction == 'long' %}
+            <a class="btn" href="/investments?rec={{ rec.id }}{% if idea.suggested_qty %}&qty={{ idea.suggested_qty }}{% endif %}" title="record a real purchase you actually made, linked to this call">bought</a>
+            {% endif %}
+          </div>
         </td>
       </tr>
       {% else %}

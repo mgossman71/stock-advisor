@@ -65,16 +65,18 @@
       <td class="muted" style="max-width:24rem">{{ rec.rationale[:160] }}{% if rec.rationale|length > 160 %}…{% endif %}</td>
       <td>
         {% if rec.status == 'open' %}
-        <a class="btn" href="/portfolio?prefill={{ rec.id }}">execute</a>
-        {% if rec.direction == 'long' %}
-        <a class="btn" href="/investments?rec={{ rec.id }}">I bought this</a>
-        {% endif %}
-        <form hx-post="/recommendations/{{ rec.id }}/close" style="display:inline">
-          <button class="btn secondary" type="submit">close</button>
-        </form>
-        <form hx-post="/recommendations/{{ rec.id }}/dismiss" style="display:inline">
-          <button class="btn secondary" type="submit">dismiss</button>
-        </form>
+        <div class="row-actions">
+          <a class="btn" href="/portfolio?prefill={{ rec.id }}" title="simulate this call in the paper account">paper</a>
+          {% if rec.direction == 'long' %}
+          <a class="btn" href="/investments?rec={{ rec.id }}" title="record a real purchase you actually made, linked to this call">bought</a>
+          {% endif %}
+          <form hx-post="/recommendations/{{ rec.id }}/close">
+            <button class="btn secondary" type="submit" title="close this call manually">close</button>
+          </form>
+          <form hx-post="/recommendations/{{ rec.id }}/dismiss">
+            <button class="btn secondary" type="submit" title="I chose not to act on this call">dismiss</button>
+          </form>
+        </div>
         {% endif %}
       </td>
     </tr>
