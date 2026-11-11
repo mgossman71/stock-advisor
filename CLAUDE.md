@@ -108,7 +108,7 @@ the README whenever these change), `test_report.py`/`test_advisor.py`
   settings come only from compose `environment:`. There is no `FRED_API_KEY` setting
   (FRED is reached key-free via `fredgraph.csv`) — do not invent env vars.
 - **Compose searches parent directories.** A project without its own compose file picks
-  up the stale `/Users/markgossman/docker-compose.yml` (an unrelated, deleted Node
+  up the stale `~/docker-compose.yml` (an unrelated, deleted Node
   project whose `./server` / `./client` build contexts no longer exist), which fails as
   `unable to prepare context`. That is why this file exists here.
 - **`sqlalchemy.inspect(engine)` checks out a second connection.** Harmless on a file
