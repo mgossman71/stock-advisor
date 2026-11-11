@@ -76,6 +76,17 @@ make test         # pytest, no network, ~1s
 # then open the app: it asks you to create a password on first visit
 ```
 
+**No data steps needed.** On a fresh database the app sets itself up in the
+background as soon as it starts: it loads the S&P 500 list (`UNIVERSE_SIZE`
+stocks), fetches two years of prices plus fundamentals, news and analyst
+actions, researches every stock and creates the first suggestions. A
+progress bar shows at the top of every page; expect 10–20 minutes for 100
+stocks. If the process stops part-way, the next start resumes (prices
+already fetched are skipped). After that, the nightly job (`NIGHTLY_CRON`)
+keeps everything current. The "Run refresh job" and "Screen now" buttons
+also run in the background, so a reverse proxy's request timeout can't
+kill them.
+
 ### Password protection
 
 Login is always on. Every page and API needs it except `/login`, `/setup`,
@@ -129,6 +140,8 @@ Copy `.env.example` to `.env`. Nothing secret is ever in code.
 | `BENCHMARK_SYMBOL` / `VIX_SYMBOL` | grading + regime panel | `^GSPC` / `^VIX` |
 | `NIGHTLY_CRON` | APScheduler cron (UTC) | `15 21 * * *` |
 | `SCHEDULER_ENABLED` | set `0` in one-shot containers | `true` |
+| `AUTO_SETUP` | load universe + prices + screen on a fresh DB at startup (web process only) | `true` |
+| `UNIVERSE_SIZE` | how many S&P 500 stocks the app screens | `100` |
 | `SESSION_COOKIE_SECURE` | force the cookie's `Secure` flag (set behind a TLS proxy) | `false` |
 
 ## How the scoring works (exact thresholds)
@@ -221,7 +234,7 @@ pages — a call with an unfinished window is *not graded*, not "0".
 ## Tests
 
 ```
-make test   # 289 tests, <4s, no network
+make test   # 304 tests, <4s, no network
 ```
 
 Pinned invariants: P&L math (incl. shorts + borrow), scoring thresholds

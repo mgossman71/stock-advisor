@@ -1,0 +1,41 @@
+{% set titles = {"first-run setup": "Setting up the app for the first time",
+                 "refresh": "Refresh job", "nightly": "Nightly job", "screen": "Screening"} %}
+{% if status.running %}
+<div class="job-result" hx-get="/jobs/status?watching=1" hx-trigger="every 3s" hx-swap="outerHTML">
+  <b>{{ titles.get(status.name, status.name) }}</b> — {{ status.phase }}{% if status.detail %} {{ status.detail }}{% endif %}
+  {% if status.total %}
+  <progress value="{{ status.done }}" max="{{ status.total }}"></progress>
+  {{ status.done }} / {{ status.total }}
+  {% endif %}
+  {% if status.name == "first-run setup" %}
+  <p class="muted">Loading the stock list and two years of prices, then researching every stock.
+    Suggestions appear on the Dashboard and Recommendations page when it finishes
+    (usually 10–20 minutes). You can keep using the app meanwhile.</p>
+  {% else %}
+  <p class="muted">Running in the background — you can leave this page.</p>
+  {% endif %}
+</div>
+{% elif watching and status.finished_at %}
+<div class="job-result">
+  {% if status.error %}
+  <b class="neg">{{ titles.get(status.name, status.name) }} failed:</b> {{ status.error }}
+  {% elif status.name == "screen" %}
+  {% set stats = status.result %}
+  <b>Screen done:</b> scored={{ stats.scored }}
+  · skipped (short history)={{ stats.skipped_short_history }}
+  · new calls={{ stats.new_recommendations|length }}
+  {% else %}
+  {% set report = status.result %}
+  <b>{{ titles.get(status.name, status.name) }} done.</b>
+  fetched={{ report.fetched|length }} (errors: {{ report.fetch_errors|length }}) ·
+  scored={{ report.scored }} · new calls={{ report.new_recommendations }} ·
+  graded={{ report.graded }} · alerts triggered={{ report.alerts_triggered }}
+  {% if report.fetch_errors %}
+  <details><summary class="neg">{{ report.fetch_errors|length }} fetch error(s)</summary>
+    <ul>{% for e in report.fetch_errors %}<li>{{ e }}</li>{% endfor %}</ul></details>
+  {% endif %}
+  {% for n in report.notes %}<p class="muted">{{ n }}</p>{% endfor %}
+  {% endif %}
+  <p><a href="">Reload to see the results.</a></p>
+</div>
+{% endif %}

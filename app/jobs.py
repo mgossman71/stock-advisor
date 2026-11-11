@@ -24,9 +24,13 @@ from sqlalchemy.orm import Session
 
 from app.config import Settings, get_settings
 from app.db.models import (
-    Alert, DataFetchLog, EarningsEvent, PriceHistory, Recommendation, Ticker,
+    Alert, DataFetchLog, EarningsEvent, PriceHistory, Recommendation, ResearchReport, Ticker,
 )
+from app.background import Progress
+from app.db.base import session_scope
 from app.ingestion.ingest import log_fetch, refresh_symbol
+from app.ingestion.universe import load_universe, persist_universe
+from app.providers.registry import build_provider
 from app.providers.base import MarketDataProvider
 from app.research.outcomes import grade_recommendation, update_statuses
 from app.research.screener import screen_universe
@@ -103,21 +107,71 @@ def _borrow_already_charged(session: Session, today: dt.date) -> bool:
     ) > 0
 
 
+def needs_first_run(session: Session) -> bool:
+    """A fresh install: no screening universe yet, or most of it never screened.
+
+    The second half makes setup resumable - if the process stopped during the
+    first fetch (or only the seed script ran, which researches a handful),
+    the next start runs it again and ingestion skips what is already fresh.
+    """
+    universe = session.scalar(
+        select(func.count(Ticker.id)).where(Ticker.in_universe.is_(True))) or 0
+    screened = session.scalar(
+        select(func.count(func.distinct(ResearchReport.ticker_id)))
+        .join(Ticker, Ticker.id == ResearchReport.ticker_id)
+        .where(Ticker.in_universe.is_(True))) or 0
+    return universe == 0 or screened * 2 < universe
+
+
+def run_pipeline(progress: Progress | None = None, *, max_symbols: int | None = None,
+                 with_alternatives: bool = True) -> JobReport:
+    """Background entry point: own session + provider, universe loaded if missing."""
+    settings = get_settings()
+    with session_scope() as session:
+        return run_nightly(session, build_provider(settings), settings=settings,
+                           max_symbols=max_symbols, with_alternatives=with_alternatives,
+                           load_universe_if_empty=True, progress=progress)
+
+
+def run_screen_only(progress: Progress | None = None):
+    """Background entry point for "Screen now": score stored data, no fetching."""
+    with session_scope() as session:
+        stats = screen_universe(session, progress=progress, commit_each=True)
+        session.commit()
+        return stats
+
+
 def run_nightly(
     session: Session, provider: MarketDataProvider, *,
     settings: Settings | None = None, today: dt.date | None = None,
     max_symbols: int | None = None, with_alternatives: bool = False,
+    load_universe_if_empty: bool = False, progress: Progress | None = None,
 ) -> JobReport:
     """Full pipeline pass.  Safe to call any number of times per day."""
     settings = settings or get_settings()
     today = today or dt.date.today()
     report = JobReport()
 
-    # 1. fetch (only what we already track - universe loading is a separate step)
+    def step(phase: str, done: int | None = None, total: int | None = None,
+             detail: str | None = None) -> None:
+        if progress is not None:
+            progress(phase, done, total, detail)
+
+    # 0. a fresh install has no universe yet: load the stock list first
+    if load_universe_if_empty and not session.scalar(
+            select(func.count(Ticker.id)).where(Ticker.in_universe.is_(True))):
+        step("loading the stock list")
+        universe = load_universe(settings)
+        count = persist_universe(session, universe.members)
+        session.commit()
+        report.notes.append(f"universe loaded: {count} tickers from {universe.source}")
+
+    # 1. fetch everything tracked (2 years of history the first time)
     symbols = target_symbols(session, settings)
     if max_symbols:
         symbols = symbols[:max_symbols]
-    for symbol in symbols:
+    for index, symbol in enumerate(symbols, start=1):
+        step("fetching prices", index - 1, len(symbols), symbol)
         asset = "index" if symbol in (settings.benchmark_symbol, settings.vix_symbol) else "stock"
         try:
             outcomes = refresh_symbol(session, provider, symbol,
@@ -157,9 +211,10 @@ def run_nightly(
     session.commit()
 
     # 4. screen + grade
-    screen = screen_universe(session)
+    screen = screen_universe(session, progress=progress, commit_each=True)
     report.scored = screen.scored
     report.new_recommendations = len(screen.new_recommendations)
+    step("grading past calls")
     for rec in session.scalars(select(Recommendation)):
         if grade_recommendation(session, rec, benchmark_symbol=settings.benchmark_symbol,
                                 today=today) is not None:
@@ -168,6 +223,7 @@ def run_nightly(
     session.commit()
 
     # 5. alerts
+    step("checking alerts")
     report.alerts_triggered = evaluate_alerts(session, settings, today=today)
     session.commit()
     return report

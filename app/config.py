@@ -72,6 +72,9 @@ class Settings(BaseSettings):
 
     # --- scheduling / alerts ----------------------------------------------
     scheduler_enabled: bool = True
+    #: On a fresh database the web process loads the universe, fetches prices
+    #: and screens in the background at startup (needs ``scheduler_enabled``).
+    auto_setup: bool = True
     #: "minute hour dom month dow", evaluated in UTC (21:15 UTC = 16:15 EST /
     #: 17:15 EDT, i.e. after the US close all year).
     nightly_cron: str = "15 21 * * *"

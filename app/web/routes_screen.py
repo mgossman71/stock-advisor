@@ -7,7 +7,9 @@ from sqlalchemy import func, select
 
 from app.db.base import session_scope
 from app.db.models import ResearchReport, Ticker
-from app.research.screener import screen_universe
+from app.background import runner
+from app.jobs import run_screen_only
+from app.web.routes_jobs import job_status_response
 from app.web.common import DISCLAIMER, templates
 
 router = APIRouter()
@@ -53,12 +55,8 @@ def screen_page(request: Request, sector: str | None = None, q: str | None = Non
 
 
 @router.post("/screen/run")
-def run_screen(request: Request, limit: int | None = None):
-    """Score the whole tracked universe now (no fetching - that's the nightly job)."""
-    with session_scope() as session:
-        stats = screen_universe(session, limit=limit)
-        session.commit()
-    return templates.TemplateResponse(
-        request=request, name="partials/screen_result.html",
-        context={"disclaimer": DISCLAIMER, "stats": stats},
-    )
+def run_screen(request: Request):
+    """Score the tracked universe in the background (no fetching - that's the
+    pipeline); returns the polling progress panel."""
+    runner.start("screen", run_screen_only)
+    return job_status_response(request)

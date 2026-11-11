@@ -25,7 +25,7 @@ make clean-db-docker           # down -v: ALSO deletes the database volume
 make docker-stats              # stats as the container sees them (volume, not ./data)
 make docker-fetch TICKER=MSFT  # one-shot fetch into the container's volume
 
-make test                      # .venv/bin/python -m pytest -q -> 289 tests, <4s, no network
+make test                      # .venv/bin/python -m pytest -q -> 304 tests, <4s, no network
 make migrate                   # alembic upgrade head
 rm -f data/stock_advisor.db* && make migrate    # rebuild the local DB from scratch
 bash scripts/bootstrap.sh      # .venv (Python 3.11/3.12), install deps, migrate — idempotent
@@ -161,10 +161,16 @@ the README whenever these change), `test_report.py`/`test_advisor.py`
   `app/main.py`): the CSRF guard, alongside the `SameSite=Lax` cookie.
 - `data/stock_advisor.db*` is git-ignored — delete it and `make migrate` for a clean rebuild.
 - A real `.env` may hold `FRED_API_KEY`; never print its value.
-- **Scheduler ownership:** the app container arms APScheduler (nightly cron);
-  one-shot containers (`ingest`) must set `SCHEDULER_ENABLED=0` or two
-  processes race the same SQLite volume. `POST /jobs/refresh` is the manual
-  trigger and is idempotent — short-borrow accrual is gated once per calendar
+- **Scheduler ownership:** the app container arms APScheduler (nightly cron)
+  and, on a fresh DB (`needs_first_run`: no universe, or under half of it screened), starts
+  first-run setup (`AUTO_SETUP`); one-shot containers (`ingest`) must set
+  `SCHEDULER_ENABLED=0` or two processes race the same SQLite volume.
+- **Long work goes through `app/background.py`'s `runner`** (single-flight,
+  daemon thread, progress via `GET /jobs/status`): first-run setup, nightly,
+  `POST /jobs/refresh`, `POST /screen/run`. Never run the pipeline inside a
+  request - a proxy timeout kills it. Background screens commit per ticker
+  (`commit_each`) so a slow LLM doesn't hold SQLite's write lock.
+  `POST /jobs/refresh` is the manual trigger and is idempotent — short-borrow accrual is gated once per calendar
   day by a `data_fetch_log` row (`provider='system'`, `endpoint='short_borrow'`).
 - **Web routes use `session_scope()` directly**; expire_on_commit is False so
   ORM objects stay readable after commit, but lazy relationships must be

@@ -2,7 +2,9 @@
 
 Lifespan starts APScheduler only when ``SCHEDULER_ENABLED`` is set and the
 process is the web server (one-shot CLI/container jobs set it to 0), so two
-processes never race on the same SQLite file.  The nightly cron mirrors
+processes never race on the same SQLite file.  The same process runs the
+first-run setup (``AUTO_SETUP``): on a fresh database it loads the universe,
+fetches prices and screens in the background, with progress in the UI.  The nightly cron mirrors
 ``NIGHTLY_CRON`` ("minute hour dom month dow").
 """
 
@@ -23,8 +25,8 @@ from app import auth
 from app.config import BASE_DIR, get_settings
 from app.db.base import session_scope
 from app.ingestion.stats import coverage_by_ticker, recent_fetch_log, table_counts
-from app.jobs import run_nightly
-from app.providers.registry import build_provider
+from app.background import runner
+from app.jobs import needs_first_run, run_pipeline
 from app.web import routers
 from app.web.common import DISCLAIMER, templates
 
@@ -98,14 +100,9 @@ def _cron_trigger(expression: str) -> CronTrigger:
 
 
 def nightly_job() -> None:
-    """APScheduler entry: fresh provider + session per run (no leaked state)."""
-    settings = get_settings()
-    try:
-        with session_scope() as session:
-            run_nightly(session, build_provider(settings), settings=settings,
-                        with_alternatives=True)
-    except Exception:  # pragma: no cover - scheduler must never kill the process
-        logger.exception("nightly job failed")
+    """APScheduler entry, through the single-flight runner (skips if busy)."""
+    if not runner.run_blocking("nightly", run_pipeline):
+        logger.info("nightly job skipped: another job is still running")
 
 
 @app.on_event("startup")
@@ -113,6 +110,12 @@ def start_scheduler() -> None:
     settings = get_settings()
     if not settings.scheduler_enabled:
         return
+    if settings.auto_setup:
+        with session_scope() as session:
+            fresh = needs_first_run(session)
+        if fresh:
+            logger.info("fresh install: loading the universe and prices in the background")
+            runner.start("first-run setup", run_pipeline)
     scheduler = BackgroundScheduler(timezone="UTC", daemon=True)
     scheduler.add_job(nightly_job, _cron_trigger(settings.nightly_cron),
                       id="nightly", replace_existing=True)

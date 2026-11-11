@@ -32,7 +32,7 @@
     </form>
   </header>
   <div class="disclaimer" role="note">{{ disclaimer }}</div>
-  <div id="job-result"></div>
+  <div id="job-result" hx-get="/jobs/status" hx-trigger="load"></div>
   <main>
     {% block content %}{% endblock %}
   </main>

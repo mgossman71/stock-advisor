@@ -15,6 +15,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.db.models import PriceHistory, Recommendation, Ticker
+from app.background import Progress
 from app.research.engine import AdvisorEngine
 from app.research.llm_advisor import advisor_for
 
@@ -52,15 +53,22 @@ def screening_candidates(session: Session) -> list[Ticker]:
 
 def screen_universe(
     session: Session, *, advisor: AdvisorEngine | None = None,
-    limit: int | None = None,
+    limit: int | None = None, progress: Progress | None = None,
+    commit_each: bool = False,
 ) -> ScreenStats:
-    """Build a report + recommendations for every candidate; returns counters."""
+    """Build a report + recommendations for every candidate; returns counters.
+
+    ``commit_each`` commits after every ticker - background runs use it so a
+    slow model never holds SQLite's write lock across the whole universe.
+    """
     advisor = advisor or advisor_for(session, screening=True)
     stats = ScreenStats()
     candidates = screening_candidates(session)
     if limit:
         candidates = candidates[:limit]
-    for ticker in candidates:
+    for index, ticker in enumerate(candidates, start=1):
+        if progress is not None:
+            progress("screening", index - 1, len(candidates), ticker.symbol)
         count = session.scalar(
             select(func.count(PriceHistory.id)).where(PriceHistory.ticker_id == ticker.id)
         ) or 0
@@ -74,5 +82,7 @@ def screen_universe(
             continue
         stats.scored += 1
         stats.new_recommendations.extend(advisor.recommendations_for(session, report))
+        if commit_each:
+            session.commit()
     session.flush()
     return stats

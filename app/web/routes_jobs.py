@@ -1,8 +1,9 @@
-"""Manual job trigger + data export.
+"""Manual job trigger, job progress + data export.
 
-`POST /jobs/refresh` runs the full nightly pass on demand (acceptance
-criterion #4).  It is defined as a sync ``def`` so FastAPI runs it in the
-thread pool and the event loop keeps serving the UI while providers chatter.
+`POST /jobs/refresh` starts the full nightly pass in the background (via
+``app.background.runner``) and returns a progress panel that polls
+`GET /jobs/status` until the job finishes - no request stays open for the
+length of the job, so a reverse proxy can't time it out.
 """
 
 from __future__ import annotations
@@ -11,28 +12,35 @@ from fastapi import APIRouter, Form, Request
 from sqlalchemy import inspect
 from sqlalchemy import text as sa_text
 
-from app.config import get_settings
+from app.background import runner
 from app.db.base import session_scope
-from app.jobs import run_nightly
-from app.providers.registry import build_provider
-from app.web.common import DISCLAIMER, templates
+from app.jobs import run_pipeline
+from app.web.common import templates
 
 router = APIRouter()
+
+
+def job_status_response(request: Request, *, watching: bool = True):
+    return templates.TemplateResponse(
+        request=request, name="partials/job_status.html",
+        context={"status": runner.status(), "watching": watching},
+    )
 
 
 @router.post("/jobs/refresh")
 def jobs_refresh(request: Request, max_symbols: int | None = Form(None),
                  with_alternatives: bool = Form(False)):
-    settings = get_settings()
-    provider = build_provider(settings)
-    with session_scope() as session:
-        report = run_nightly(session, provider, settings=settings,
-                             max_symbols=max_symbols,
-                             with_alternatives=bool(with_alternatives))
-    return templates.TemplateResponse(
-        request=request, name="partials/jobs_result.html",
-        context={"disclaimer": DISCLAIMER, "report": report},
-    )
+    """Start the pipeline (or, if a job is already running, show its progress)."""
+    runner.start("refresh", lambda progress: run_pipeline(
+        progress, max_symbols=max_symbols, with_alternatives=bool(with_alternatives)))
+    return job_status_response(request)
+
+
+@router.get("/jobs/status")
+def jobs_status(request: Request, watching: bool = False):
+    """Progress panel.  ``watching`` = polled after a start, so show the result
+    when the job ends; a plain page load shows nothing once it's idle."""
+    return job_status_response(request, watching=watching)
 
 
 @router.get("/api/export.json")
