@@ -2,12 +2,14 @@
 {% set nav = "investments" %}
 {% block title %}My Investments — Stock Advisor{% endblock %}
 {% block content %}
-<h1>My Investments</h1>
+<h1>My Investments <span class="muted">— real money: purchases you actually made</span></h1>
 <p class="muted">
   Real purchases you made off the advice — recorded fills, FIFO cost basis,
   gain/loss by holding period and <b>estimated</b> tax liability
   (&le;365d short-term, &gt;365d long-term). Estimates at your configured
   rates, not tax advice; wash-sale rules are not applied yet.
+  Simulated trades from the <b>simulate</b> button do <b>not</b> appear here -
+  they live in the <a href="/portfolio">Paper account</a>.
 </p>
 
 {% if flash %}<p class="flash-ok">{{ flash }}</p>{% endif %}
@@ -30,10 +32,11 @@
   </div>
   <div class="panel">
     <h2>Record a trade <span class="muted">what you actually did at your broker</span></h2>
-    <form method="post" action="/investments/trade" class="inline">
+    <form method="post" action="/investments/trade" class="inline" data-cost="trade-cost">
       <select name="symbol" required>
         {% for s in symbols %}
-        <option value="{{ s }}" {{ 'selected' if prefill and prefill.symbol == s }}>{{ s }}</option>
+        <option value="{{ s }}" data-close="{{ closes.get(s, '') }}"
+                {{ 'selected' if prefill and prefill.symbol == s }}>{{ s }}</option>
         {% endfor %}
       </select>
       <select name="side" required>
@@ -53,6 +56,9 @@
       {% if prefill %}<input type="hidden" name="recommendation_id" value="{{ prefill.recommendation_id }}">{% endif %}
       <button class="btn" type="submit">Record</button>
     </form>
+    <p class="muted" style="margin:.4rem 0 0">Cost of this trade:
+      <span class="cost-estimate" id="trade-cost">{% if prefill %}${{ (prefill.qty * (prefill.price|float))|money }}{% else %}—{% endif %}</span>
+      <span class="muted">qty × fill price (commission added at recording).</span></p>
     <form method="post" action="/investments/rates" class="inline" style="margin-top:.75rem">
       <label>ST rate % <input name="short_term_pct" value="{{ rates.short * 100 }}" style="width:5rem"></label>
       <label>LT rate % <input name="long_term_pct" value="{{ rates.long * 100 }}" style="width:5rem"></label>

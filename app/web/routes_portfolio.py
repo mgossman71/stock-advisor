@@ -13,7 +13,7 @@ from app.config import get_settings
 from app.db.base import session_scope
 from app.db.models import CashAdjustment, Order, Position, Ticker
 from app.trading.accounts import CashAdjustmentError, adjust_cash, get_or_open_account
-from app.trading.orders import execute_order
+from app.trading.orders import execute_order, latest_price
 from app.trading.sizing import suggested_size
 from app.trading.snapshots import mark_positions, portfolio_values, write_snapshot
 from app.web.common import DISCLAIMER, templates
@@ -66,6 +66,11 @@ def portfolio_page(request: Request, prefill: int | None = None):
             key=lambda kv: abs(kv[1]), reverse=True,
         )
         symbols = session.scalars(select(Ticker.symbol).order_by(Ticker.symbol)).all()
+        # Latest stored close per ticker: powers the live "est. trade cost"
+        # readout on the order ticket (data-close on each <option>).
+        closes = {sym: (str(p[0]) if (p := latest_price(session, tid)) else "")
+                  for sym, tid in session.execute(
+                      select(Ticker.symbol, Ticker.id).order_by(Ticker.symbol))}
         adjustments = session.scalars(
             select(CashAdjustment).where(CashAdjustment.account_id == account.id)
             .order_by(CashAdjustment.created_at.desc()).limit(25)
@@ -74,8 +79,9 @@ def portfolio_page(request: Request, prefill: int | None = None):
         request=request, name="portfolio.html",
         context={"disclaimer": DISCLAIMER, "account": account, "positions": positions,
                  "values": values, "orders": orders, "prefill": prefill_data,
-                 "realized": realized, "symbols": symbols, "settings": settings,
-                 "adjustments": adjustments, "data_today": dt.date.today()},
+                 "realized": realized, "symbols": symbols, "closes": closes,
+                 "settings": settings, "adjustments": adjustments,
+                 "data_today": dt.date.today()},
     )
 
 
@@ -111,7 +117,7 @@ def place_order(
                        benchmark_symbol=settings.benchmark_symbol)
         session.commit()
         message = (
-            f"Filled {side} {qty} {symbol.upper()} @ {result.order.fill_price}"
+            f"PAPER account: filled {side} {qty} {symbol.upper()} @ {result.order.fill_price}"
             if result.accepted else f"Order {result.order.status}: {result.reason}"
         )
     return templates.TemplateResponse(

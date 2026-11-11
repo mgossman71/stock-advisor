@@ -62,6 +62,7 @@ td.actions, th.actions { width: 1%; white-space: nowrap; }
 .btn.quiet { background: transparent; color: var(--muted); border: 0;
   text-decoration: underline; font-weight: 400; padding: .3rem .2rem; }
 .btn.quiet:hover { color: var(--text); }
+.cost-estimate { color: var(--text); font-weight: 600; font-variant-numeric: tabular-nums; }
 input, select { background: #0d1117; color: var(--text); border: 1px solid var(--line);
   border-radius: 6px; padding: .4rem .55rem; font: inherit; }
 form.inline { display: flex; gap: .5rem; align-items: center; flex-wrap: wrap; }

@@ -2,7 +2,9 @@
 {% set nav = "portfolio" %}
 {% block title %}Portfolio — Stock Advisor{% endblock %}
 {% block content %}
-<h1>Portfolio</h1>
+<h1>Portfolio <span class="muted">— paper account: simulated trades, fake money</span></h1>
+<p class="muted">Simulated buys from the <b>simulate</b> button land here. Purchases you
+  actually made with real money belong on the <a href="/investments">Investments</a> page.</p>
 <div class="panels">
   <div class="panel">
     <h2>Account <span class="muted">opened {{ account.opened_at|as_of }}</span></h2>
@@ -27,10 +29,12 @@
   </div>
   <div class="panel">
     <h2>Order ticket <span class="muted">simulated fills at latest close ± slippage</span></h2>
-    <form hx-post="/portfolio/order" hx-target="#order-result" hx-swap="innerHTML" class="inline">
+    <form hx-post="/portfolio/order" hx-target="#order-result" hx-swap="innerHTML" class="inline"
+          data-cost="paper-cost">
       <select name="symbol" required>
         {% for s in symbols %}
-        <option value="{{ s }}" {{ 'selected' if prefill and prefill.symbol == s }}>{{ s }}</option>
+        <option value="{{ s }}" data-close="{{ closes.get(s, '') }}"
+                {{ 'selected' if prefill and prefill.symbol == s }}>{{ s }}</option>
         {% endfor %}
       </select>
       <select name="side" required>
@@ -43,6 +47,9 @@
       {% if prefill %}<input type="hidden" name="recommendation_id" value="{{ prefill.recommendation_id }}">{% endif %}
       <button class="btn" type="submit">Submit order</button>
     </form>
+    <p class="muted" style="margin:.4rem 0 0">Est. trade cost:
+      <span class="cost-estimate" id="paper-cost">{% if prefill and closes.get(prefill.symbol) %}${{ (prefill.qty * (closes[prefill.symbol]|float))|money }}{% else %}—{% endif %}</span>
+      <span class="muted">qty × latest close; the real fill adds slippage + commission.</span></p>
     <div id="order-result"></div>
   </div>
 </div>

@@ -37,6 +37,10 @@ def investments_page(request: Request, rec: int | None = None,
             _ = t.ticker.symbol
         rates = get_tax_rates(session)
         symbols = session.scalars(select(Ticker.symbol).order_by(Ticker.symbol)).all()
+        # Latest stored close per ticker for the live "trade cost" readout.
+        closes = {sym: (str(p[0]) if (p := latest_price(session, tid)) else "")
+                  for sym, tid in session.execute(
+                      select(Ticker.symbol, Ticker.id).order_by(Ticker.symbol))}
         prefill = None
         if rec:
             call = session.get(Recommendation, rec)
@@ -55,7 +59,7 @@ def investments_page(request: Request, rec: int | None = None,
     return templates.TemplateResponse(
         request=request, name="investments.html",
         context={"disclaimer": DISCLAIMER, "lots": lots, "summary": summary,
-                 "trades": trades, "rates": rates, "symbols": symbols,
+                 "trades": trades, "rates": rates, "symbols": symbols, "closes": closes,
                  "prefill": prefill, "today": today,
                  "flash": request.query_params.get("flash"),
                  "err": request.query_params.get("err")},

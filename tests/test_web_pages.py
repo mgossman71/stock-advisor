@@ -276,3 +276,53 @@ def test_investments_prefill_uses_latest_stored_close(client):
     match = re.search(r'name="price"[^>]*\svalue="([^"]+)"', html, re.S)
     assert match and match.group(1).startswith("101.5"), html[html.find("name=\"price\""):][:200]
     assert 'value="PRC"' in html
+
+
+# ------------------------------------------------ paper vs real + cost readout
+
+
+def test_paper_fill_lands_on_portfolio_not_investments(client):
+    """The AIZ confusion: simulated buys are PAPER and must surface on the
+    Portfolio page only - the Investments page is the real-money ledger."""
+    _seed_open_calls()
+    resp = client.post("/portfolio/order",
+                       data={"symbol": "PRC", "side": "buy", "qty": "6"})
+    assert resp.status_code == 200
+    assert "PAPER account" in resp.text
+    port = client.get("/portfolio").text
+    assert ">PRC</td>" in port  # position row rendered
+    inv = client.get("/investments").text
+    assert ">PRC</td>" not in inv  # nowhere in the real lots/tables
+    assert "Paper account" in inv  # and the page says where paper trades live
+
+
+def test_cost_readouts_wired_on_both_tickets(client):
+    """Both order forms must expose qty/price-driven cost elements."""
+    _seed_open_calls()
+    port = client.get("/portfolio").text
+    assert 'data-cost="paper-cost"' in port and 'id="paper-cost"' in port
+    assert re.search(r'data-close="101\.5', port)  # PRC latest close available
+    inv = client.get("/investments").text
+    assert 'data-cost="trade-cost"' in inv and 'id="trade-cost"' in inv
+    assert re.search(r'data-close="101\.5', inv)
+
+
+def test_cost_prefilled_server_side_without_js(client):
+    """Progressive enhancement: prefill cases render a real number even if
+    the browser runs no scripts at all."""
+    ids = _seed_open_calls()
+    port = client.get(f"/portfolio?prefill={ids['PRC']}").text
+    span = re.search(r'id="paper-cost">([^<]+)<', port)
+    assert span and span.group(1).startswith("$"), port[max(0, port.find('id="paper-cost"') - 120):][:240]
+    inv = client.get(f"/investments?rec={ids['PRC']}").text
+    span = re.search(r'id="trade-cost">([^<]+)<', inv)
+    assert span and span.group(1).startswith("$")
+
+
+def test_cost_script_is_local_not_cdn(client):
+    """The cost readout must not depend on the CDN scripts that fail in some
+    browsers - it ships as a local, cache-busted file."""
+    _seed_open_calls()
+    html = client.get("/portfolio").text
+    assert re.search(r'<script defer src="/static/app\.js\?v=\d+">','' + html)
+    assert client.get("/static/app.js").status_code == 200
