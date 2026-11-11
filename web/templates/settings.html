@@ -39,39 +39,59 @@
       Untick it if your hardware is slow.</p>
   </div>
   <div class="panel" id="autorefresh">
-    <h2>Auto-refresh <span class="muted">(runs the refresh job on a timer)</span>
-      {% if auto.enabled %}<span class="pill bullish">on · {{ 'prices' if auto.mode == 'prices' else 'full' }} every {{ auto.minutes }} min</span>
-      {% else %}<span class="pill neutral">off</span>{% endif %}</h2>
-    <form method="post" action="/settings/autorefresh" class="inline">
-      <label><input type="checkbox" name="autorefresh_enabled" value="1" {% if auto.enabled %}checked{% endif %}>
-        enabled</label>
-      <label>run <select name="autorefresh_mode">
-        <option value="prices" {% if auto.mode == 'prices' %}selected{% endif %}>prices only</option>
-        <option value="full" {% if auto.mode == 'full' %}selected{% endif %}>full refresh</option>
-      </select></label>
-      <label>every <select name="autorefresh_minutes">
-        {% set presets = [5, 10, 15, 30, 60, 120, 240, 720] %}
-        {% for m in presets %}<option value="{{ m }}" {% if m == auto.minutes %}selected{% endif %}>
-          {{ m }} min{% if m >= 60 %} ({{ (m / 60)|round(1)|string|replace('.0', '') }} h){% endif %}</option>{% endfor %}
-        {% if auto.minutes not in presets %}<option value="{{ auto.minutes }}" selected>{{ auto.minutes }} min</option>{% endif %}
-      </select></label>
-      <label><input type="checkbox" name="autorefresh_market_hours_only" value="1"
-        {% if auto.market_hours_only %}checked{% endif %}>
-        only during US market hours</label>
+    <h2>Auto-refresh <span class="muted">(each refresh job on its own timer)</span></h2>
+    {% set labels = {"prices": "Prices only", "full": "Full refresh"} %}
+    {% set job_titles = {"auto-refresh prices": "the prices auto-refresh",
+                         "auto-refresh full": "the full auto-refresh",
+                         "nightly": "the nightly job", "refresh": "a full refresh",
+                         "prices": "a price refresh", "screen": "a re-scan",
+                         "first-run setup": "first-run setup"} %}
+    {% if job_now.running %}
+    <p class="muted">Running now: <b>{{ job_titles.get(job_now.name, job_now.name) }}</b> ({{ job_now.phase }}).
+      {% for name, since in job_waiting.items() %}
+      <br>Waiting for it to finish: <b>{{ job_titles.get(name, name) }}</b> (since {{ since.strftime('%H:%M %Z') }}).
+      {% endfor %}</p>
+    {% endif %}
+    <form method="post" action="/settings/autorefresh">
+      <table>
+        <tr><th>Job</th><th>On</th><th>Every</th><th>Only during US market hours</th><th>Next run</th></tr>
+        {% for mode in ("prices", "full") %}
+        {% set sched = auto[mode] %}
+        <tr>
+          <td><b>{{ labels[mode] }}</b></td>
+          <td><input type="checkbox" name="{{ mode }}_enabled" value="1" aria-label="{{ labels[mode] }} on"
+                {% if sched.enabled %}checked{% endif %}></td>
+          <td><select name="{{ mode }}_minutes" aria-label="{{ labels[mode] }} interval">
+            {% for m in auto_presets[mode] %}<option value="{{ m }}" {% if m == sched.minutes %}selected{% endif %}>
+              {% if m < 60 %}{{ m }} min{% else %}{{ (m / 60)|round(1)|string|replace('.0', '') }} h{% endif %}</option>{% endfor %}
+            {% if sched.minutes not in auto_presets[mode] %}<option value="{{ sched.minutes }}" selected>{{ sched.minutes }} min</option>{% endif %}
+          </select></td>
+          <td><input type="checkbox" name="{{ mode }}_market_hours_only" value="1"
+                aria-label="{{ labels[mode] }} market hours only"
+                {% if sched.market_hours_only %}checked{% endif %}></td>
+          <td class="muted">{% if not sched.enabled %}off
+            {% elif auto_next[mode] %}{{ auto_next[mode].strftime('%Y-%m-%d %H:%M %Z') }}{% if sched.market_hours_only %} (skipped if closed){% endif %}
+            {% elif not auto_live %}saved; scheduler not running here (<code>SCHEDULER_ENABLED=0</code>)
+            {% else %}—{% endif %}</td>
+        </tr>
+        {% endfor %}
+      </table>
       <button class="btn" type="submit">Save</button>
     </form>
     <p class="muted">
-      {% if auto.enabled and auto_next %}Next run {{ auto_next.strftime('%Y-%m-%d %H:%M %Z') }}{% if auto.market_hours_only %} (skipped if the market is closed){% endif %}.
-      {% elif auto.enabled and not auto_live %}Saved, but the scheduler isn't running in this process (<code>SCHEDULER_ENABLED=0</code>).
-      {% endif %}
       <b>Prices only</b> is the <b>Refresh prices</b> button: live quotes for what you hold or watch
       (positions, real holdings, pending orders, alerts, open calls, watchlist), then fills, marks and
       alerts. It takes seconds. <b>Full refresh</b> is the other button: it scans the whole universe
       (prices plus a rotating slice of fundamentals), then fetches news, analyst actions and earnings for the
-      shortlist and re-screens it. It can take an hour or more, and if the AI analyst is used in
-      the screen, it makes one model call per shortlisted stock. A run that's due while another job is still going is
-      skipped, so a short interval can't stack up. Market hours = Mon–Fri 09:30–16:15 New York time
-      (holidays not excluded). The nightly job ({{ settings.nightly_cron }} UTC) runs regardless.</p>
+      shortlist and re-screens it. It takes one to two hours, and if the AI analyst is used in
+      the screen, it makes one model call per shortlisted stock.</p>
+    <p class="muted"><b>Jobs never overlap.</b> If a timer fires while another job is running (the other
+      timer, the nightly job or a button press), it waits, checks again every {{ auto_poll_seconds }} seconds,
+      and starts as soon as the other job finishes. A timer that is already waiting doesn't queue extra copies,
+      a market-hours-only run that waits past the close is dropped, and a run that waits more than
+      {{ auto_max_wait_hours }} hours gives up its turn. Market hours = Mon–Fri 09:30–16:15 New York time
+      (holidays not excluded). The nightly job ({{ settings.nightly_cron }} UTC) runs on its own schedule and
+      waits the same way.</p>
   </div>
   <div class="panel" id="discovery">
     <h2>Stock discovery <span class="muted">(which stocks get scanned, and how many get full research)</span></h2>

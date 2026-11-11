@@ -102,9 +102,10 @@ def _cron_trigger(expression: str) -> CronTrigger:
 
 
 def nightly_job() -> None:
-    """APScheduler entry, through the single-flight runner (skips if busy)."""
-    if not runner.run_blocking("nightly", run_pipeline):
-        logger.info("nightly job skipped: another job is still running")
+    """APScheduler entry, through the single-flight runner: if another job is
+    running it waits for it to finish, then runs (never alongside it)."""
+    if runner.run_when_free("nightly", run_pipeline) != "ran":
+        logger.info("nightly job skipped: another job ran for too long")
 
 
 @app.on_event("startup")

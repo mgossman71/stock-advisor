@@ -10,6 +10,7 @@ from fastapi.responses import RedirectResponse
 
 from app import autorefresh
 from app.auth import MIN_PASSWORD_LENGTH
+from app.background import runner
 from app.config import get_settings
 from app.db.base import session_scope
 from app.db.models import AppSetting, Order, ScoringWeight
@@ -51,9 +52,13 @@ def settings_page(request: Request, pw: str = ""):
         context={"disclaimer": DISCLAIMER, "weights": weights,
                  "app_settings": app_settings, "settings": settings,
                  "has_orders": has_orders, "llm": llm, "scan": scan, "universe": universe,
-                 "auto": auto, "auto_next": autorefresh.next_run_at(),
+                 "auto": auto,
+                 "auto_next": {m: autorefresh.next_run_at(m) for m in autorefresh.MODES},
                  "auto_live": autorefresh.scheduler_running(),
-                 "auto_min": autorefresh.MIN_MINUTES, "auto_max": autorefresh.MAX_MINUTES,
+                 "auto_presets": autorefresh.PRESETS,
+                 "auto_poll_seconds": int(autorefresh.POLL_SECONDS),
+                 "auto_max_wait_hours": int(autorefresh.MAX_WAIT_SECONDS // 3600),
+                 "job_now": runner.status(), "job_waiting": runner.waiting(),
                  "pw_message": PASSWORD_MESSAGES.get(pw),
                  "min_password_length": MIN_PASSWORD_LENGTH,
                  "env_summary": {
@@ -121,19 +126,25 @@ def save_defaults(alert_default_drawdown_pct: str = Form(""),
 
 
 @router.post("/settings/autorefresh")
-def save_autorefresh(autorefresh_enabled: str = Form(""),
-                     autorefresh_minutes: str = Form(""),
-                     autorefresh_market_hours_only: str = Form(""),
-                     autorefresh_mode: str = Form("")):
-    """Persist the interval and re-arm the live scheduler (no restart needed)."""
+async def save_autorefresh(request: Request):
+    """Persist both timers and re-arm the live scheduler (no restart needed).
+
+    Fields per job (``prices`` / ``full``): ``<job>_enabled``,
+    ``<job>_minutes``, ``<job>_market_hours_only``.  Unticked boxes are absent.
+    """
+    form = await request.form()
     with session_scope() as session:
         current = autorefresh.load_config(session)
-        config = autorefresh.AutoRefreshConfig(
-            enabled=autorefresh_enabled == "1",
-            minutes=autorefresh.parse_minutes(autorefresh_minutes, current.minutes),
-            market_hours_only=autorefresh_market_hours_only == "1",
-            mode=autorefresh.parse_mode(autorefresh_mode or current.mode),
-        )
+        schedules = {}
+        for mode in autorefresh.MODES:
+            schedules[mode] = autorefresh.Schedule(
+                enabled=form.get(f"{mode}_enabled") == "1",
+                minutes=autorefresh.parse_minutes(
+                    form.get(f"{mode}_minutes"), current.for_mode(mode).minutes,
+                    autorefresh.MIN_MINUTES_BY_MODE[mode]),
+                market_hours_only=form.get(f"{mode}_market_hours_only") == "1",
+            )
+        config = autorefresh.AutoRefreshConfig(**schedules)
         autorefresh.save_config(session, config)
         session.commit()
     autorefresh.apply_schedule(config)

@@ -138,12 +138,15 @@ by sector, size band (small < $2B, mid, large ≥ $10B), held, and shortlist.
 fundamentals per night, all without a restart. `python -m app.cli scan
 --top 25` prints the ranking from stored data.
 
-**Auto-refresh** (Settings → Auto-refresh, off by default) runs either job,
-prices only by default, every 5 min to 12 h. It can be limited to US
-market hours (Mon–Fri 09:30–16:15 New York, no holiday calendar). Saving
-re-arms the scheduler straight away, so there's no restart. A run that's
-due while another job is running is skipped, not queued. The nightly cron
-still runs either way.
+**Auto-refresh** (Settings → Auto-refresh, off by default) gives each job
+its own timer: prices only (every 5 min to 12 h) and full refresh (every
+1 h to 24 h). Each can be limited to US market hours (Mon–Fri
+09:30–16:15 New York, no holiday calendar) on its own. Saving re-arms the
+scheduler straight away, so there's no restart. Jobs never run at the same
+time: a timer (or the nightly cron) that fires while another job is running
+waits, checks again every 30 seconds, and starts when that job finishes. A
+market-hours-only run that waits past the close is dropped, and one that
+waits over 6 hours gives up its turn.
 
 ### Password protection
 

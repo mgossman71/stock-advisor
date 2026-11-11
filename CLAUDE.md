@@ -25,7 +25,7 @@ make clean-db-docker           # down -v: ALSO deletes the database volume
 make docker-stats              # stats as the container sees them (volume, not ./data)
 make docker-fetch TICKER=MSFT  # one-shot fetch into the container's volume
 
-make test                      # .venv/bin/python -m pytest -q -> 354 tests, no network
+make test                      # .venv/bin/python -m pytest -q -> 359 tests, no network
 make migrate                   # alembic upgrade head
 rm -f data/stock_advisor.db* && make migrate    # rebuild the local DB from scratch
 bash scripts/bootstrap.sh      # .venv (Python 3.11/3.12), install deps, migrate — idempotent
@@ -195,12 +195,19 @@ the README whenever these change), `test_report.py`/`test_advisor.py`
   fallback (S&P/seed) never replaces an existing universe.
   `needs_first_run` counts *scanned* (not reported) universe members.
   A local `.env` with `UNIVERSE_SIZE=100` now means "100 largest".
-- **Auto-refresh** (`app/autorefresh.py`): interval re-runs of either job
-  (`autorefresh_mode` = `prices` default | `full`), config in `app_settings`
-  rows `autorefresh_*` (off by default).
+- **Auto-refresh** (`app/autorefresh.py`): two independent timers, one per
+  job (`prices`, `full`; full has a 60-min floor), each with its own
+  on/interval/market-hours, in `app_settings` rows
+  `autorefresh_<job>_<field>` (off by default; the pre-split single-timer
+  `autorefresh_*` rows are read as a fallback and deleted on save).
   `POST /settings/autorefresh` re-arms the live scheduler via
   `apply_schedule` (module-level `_scheduler`, set at startup; `None` in
-  tests/CLI). Ticks use `runner.run_blocking`, so a busy runner skips them.
+  tests/CLI; scheduler job ids `autorefresh-prices` / `autorefresh-full`).
+  Jobs never overlap: ticks and `nightly_job` use `runner.run_when_free`,
+  which polls every 30 s until the running job ends (max 6 h; a
+  market-hours tick that waits past the close is dropped) instead of
+  skipping. `max_instances=1` stops a waiting timer from queuing copies.
+  `runner.waiting()` feeds the "Waiting for it to finish" line in Settings.
 - **Web routes use `session_scope()` directly**; expire_on_commit is False so
   ORM objects stay readable after commit, but lazy relationships must be
   touched *inside* the scope before rendering. HTMX full-page actions return
