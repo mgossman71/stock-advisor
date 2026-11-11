@@ -64,7 +64,7 @@
         <th class="num">Realized</th><th class="num">Days held</th></tr>
     {% for p in positions %}
     <tr>
-      <td>{{ p.ticker.symbol }}</td>
+      <td><a href="/research/{{ p.ticker.symbol }}">{{ p.ticker.symbol }}</a></td>
       <td><span class="pill {{ 'bearish' if p.is_short else 'bullish' }}">{{ 'SHORT' if p.is_short else 'LONG' }}</span></td>
       <td class="num">{{ p.qty }}</td>
       <td class="num">{{ p.avg_cost|price }}</td>

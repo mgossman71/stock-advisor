@@ -349,7 +349,8 @@ def test_paper_fill_lands_on_portfolio_not_investments(client, monkeypatch):
     assert resp.status_code == 200
     assert "PAPER account" in resp.text
     port = client.get("/portfolio").text
-    assert ">PRC</td>" in port  # position row rendered
+    # position row rendered, ticker linking to the stock's research page
+    assert '<a href="/research/PRC">PRC</a></td>' in port
     inv = client.get("/investments").text
     assert ">PRC</td>" not in inv  # nowhere in the real lots/tables
     assert "Paper account" in inv  # and the page says where paper trades live
