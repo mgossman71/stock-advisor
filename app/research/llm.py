@@ -32,6 +32,18 @@ class LLMUnreachable(LLMError):
     """Transport-level failure: connection refused, timeout, HTTP 5xx/401."""
 
 
+class LLMTruncated(LLMError):
+    """The model hit its output budget (``finish_reason=length``) mid-answer.
+
+    A per-request problem, not an unreachable server - so it must not stop
+    the rest of a screen from using the model.
+    """
+
+
+#: Ceiling for ``max_tokens`` (form input and the automatic retry).
+MAX_TOKENS_CEILING = 32000
+
+
 @dataclass(frozen=True)
 class LLMConfig:
     enabled: bool = False
@@ -39,7 +51,10 @@ class LLMConfig:
     model: str = ""
     api_key: str = ""
     temperature: Decimal = Decimal("0.2")
-    max_tokens: int = 1500
+    #: Output budget per answer.  Generous on purpose: reasoning models spend
+    #: it on thinking before the JSON, and 1500 truncated them
+    #: (``finish_reason=length``).  Only the answer's real length is generated.
+    max_tokens: int = 16000
     timeout_seconds: int = 180
     #: Also use the model for every ticker in the nightly screen (one call each).
     use_in_screen: bool = True
@@ -123,7 +138,8 @@ def config_from_form(form: dict, stored: LLMConfig) -> LLMConfig:
         api_key=api_key,
         temperature=_parse_decimal(form.get("llm_temperature"), stored.temperature,
                                    Decimal("0"), Decimal("2")),
-        max_tokens=_parse_int(form.get("llm_max_tokens"), stored.max_tokens, 64, 32000),
+        max_tokens=_parse_int(form.get("llm_max_tokens"), stored.max_tokens, 64,
+                              MAX_TOKENS_CEILING),
         timeout_seconds=_parse_int(form.get("llm_timeout_seconds"), stored.timeout_seconds,
                                    5, 1800),
         use_in_screen=bool(form.get("llm_use_in_screen")),
@@ -149,12 +165,31 @@ class LLMClient:
 
         Asks for ``response_format: json_object`` first; servers that reject
         it (older LM Studio, some llama.cpp builds) get one retry without.
+        An answer cut off by the output budget (reasoning models spend it on
+        thinking first) gets one retry with double the budget.
         """
+        budget = self.config.max_tokens
+        try:
+            return self._chat_once(messages, json_mode=json_mode, max_tokens=budget)
+        except LLMTruncated:
+            bigger = min(budget * 2, MAX_TOKENS_CEILING)
+            if bigger <= budget:
+                raise
+            try:
+                return self._chat_once(messages, json_mode=json_mode, max_tokens=bigger)
+            except LLMTruncated as exc:
+                raise LLMTruncated(
+                    f"model ran out of output budget even at {bigger} tokens "
+                    f"(max tokens is {budget}) - raise 'max tokens' under "
+                    f"Settings -> AI analyst"
+                ) from exc
+
+    def _chat_once(self, messages: list[dict], *, json_mode: bool, max_tokens: int) -> str:
         body: dict = {
             "model": self.config.model,
             "messages": messages,
             "temperature": float(self.config.temperature),
-            "max_tokens": self.config.max_tokens,
+            "max_tokens": max_tokens,
             "stream": False,
         }
         if json_mode:
@@ -167,9 +202,12 @@ class LLMClient:
             raise _http_error(response)
         try:
             data = response.json()
-            content = data["choices"][0]["message"]["content"]
+            choice = data["choices"][0]
+            content = choice["message"]["content"]
         except (ValueError, KeyError, IndexError, TypeError) as exc:
             raise LLMError(f"unexpected response shape from {self.config.base_url}") from exc
+        if choice.get("finish_reason") == "length":
+            raise LLMTruncated(f"answer cut off at max_tokens={max_tokens}")
         if not isinstance(content, str) or not content.strip():
             raise LLMError("model returned an empty message")
         return content
@@ -220,9 +258,17 @@ def extract_json(text: str) -> dict:
     return parsed
 
 
+#: Error bodies that mean "the output budget ran out", whatever the status:
+#: some gateways (e.g. ones enforcing structured output) report it as a 5xx.
+_TRUNCATION_MARKERS = ("finish_reason=length", "finish_reason: length",
+                       "structured_output_failed", "increase the output budget")
+
+
 def _http_error(response: httpx.Response) -> LLMError:
     detail = response.text[:200].strip()
     message = f"HTTP {response.status_code} from {response.request.url}: {detail}"
+    if any(marker in response.text for marker in _TRUNCATION_MARKERS):
+        return LLMTruncated(message)
     # Auth / server faults won't fix themselves on the next ticker; bad
     # requests (e.g. unknown model name) are also config problems.
     if response.status_code in (401, 403, 404) or response.status_code >= 500:
