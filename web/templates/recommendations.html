@@ -49,7 +49,7 @@
     {% for rec in recs %}
     {% set o = rec.outcome %}
     {% set p = prices.get(rec.id) %}
-    <tr x-data="{ rationaleOpen: false }">
+    <tr>
       <td class="muted" style="white-space:nowrap">{{ rec.generated_at.strftime('%Y-%m-%d') }}</td>
       <td><span class="pill {{ 'bullish' if rec.direction == 'long' else 'bearish' }}">{{ rec.direction|upper }}</span></td>
       <td><a href="/research/{{ rec.ticker.symbol }}">{{ rec.ticker.symbol }}</a></td>
@@ -63,9 +63,12 @@
                  {{ o.alpha_90d if o.alpha_90d is not none else "—" }} /
                  {{ o.alpha_180d if o.alpha_180d is not none else "—" }}
         {% else %}—{% endif %}</td>
-      <td class="clamp2" :class="{ unclamped: rationaleOpen }"
-          @click="rationaleOpen = !rationaleOpen"
-          :title="rationaleOpen ? 'collapse' : 'click to read the full rationale'">{{ rec.rationale }}</td>
+      <td>
+        <details class="rationale">
+          <summary>{{ rec.rationale }}</summary>
+          <div>{{ rec.rationale }}</div>
+        </details>
+      </td>
       <td>
         {% if rec.status == 'open' %}
         <div class="row-actions">

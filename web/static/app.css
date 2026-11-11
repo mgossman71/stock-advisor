@@ -33,11 +33,16 @@ th { color: var(--muted); font-weight: 600; cursor: pointer; }
    instead of crushing columns into wrap-hell. */
 .tablewrap { overflow-x: auto; }
 table.wide { min-width: 1050px; }
-.clamp2 { max-width: 20rem; color: var(--muted); display: -webkit-box;
-  -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
-  cursor: pointer; }
-.clamp2.unclamped { display: block; -webkit-line-clamp: unset; line-clamp: unset;
-  max-width: 34rem; color: var(--text); }
+/* Native <details> rationale: 2-line preview when closed (no JS needed),
+   full text when open. Works even if every script on the page fails. */
+details.rationale { max-width: 30rem; }
+details.rationale summary { list-style: none; cursor: pointer; color: var(--muted);
+  display: -webkit-box; -webkit-line-clamp: 2; line-clamp: 2;
+  -webkit-box-orient: vertical; overflow: hidden; }
+details.rationale summary::-webkit-details-marker { display: none; }
+details.rationale summary::after { content: " \25B8 more"; color: var(--accent); }
+details.rationale[open] summary { display: none; }
+details.rationale > div { color: var(--text); }
 .pos { color: var(--green); } .neg { color: var(--red); } .muted { color: var(--muted); }
 .bullish { color: var(--green); } .bearish { color: var(--red); } .neutral { color: var(--amber); }
 .pill { display: inline-block; padding: 0 .5rem; border-radius: 999px; font-size: .78rem;
