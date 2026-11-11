@@ -17,7 +17,7 @@ import yfinance
 from app.config import Settings
 from app.ingestion.normalize import clean_text, parse_date, parse_datetime, percent_to_points, ratio, to_decimal, to_int
 from app.providers.base import (
-    AnalystAction, Bar, EarningsEvent, FundamentalsSnapshot, MarketDataProvider,
+    AnalystAction, Bar, Dividend, EarningsEvent, FundamentalsSnapshot, MarketDataProvider,
     NewsHeadline, ProviderResult, Quote, Side,
 )
 from app.providers.throttle import (
@@ -110,6 +110,35 @@ class YFinanceProvider(MarketDataProvider):
             ),
             error=None if bars else "no usable rows",
         )
+
+    def get_dividends(
+        self, symbol: str, start: dt.date, end: dt.date, *, asset_class: Side = "stock"
+    ) -> ProviderResult:
+        """Cash dividends from the ``Dividends`` action column of the history call."""
+        endpoint = f"dividends({symbol})"
+        if asset_class != "stock":
+            return ProviderResult(self.name, endpoint, ok=True, data=(), row_count=0)
+
+        def fetch():
+            return self._ticker(symbol).history(
+                start=start, end=end + dt.timedelta(days=1), auto_adjust=False, actions=True
+            )
+
+        frame = self._run(endpoint, fetch)
+        if frame is None or len(frame) == 0:
+            return ProviderResult(self.name, endpoint, ok=False, error="empty")
+        if "Dividends" not in frame.columns:
+            return ProviderResult(self.name, endpoint, ok=True, data=(), row_count=0)
+        rows: list[Dividend] = []
+        for index, value in frame["Dividends"].items():
+            amount = to_decimal(value)
+            ex_date = parse_date(index)
+            if amount is None or ex_date is None or amount <= 0:
+                continue  # 0.0 means "no dividend that day", not a $0 dividend
+            rows.append(Dividend(symbol=symbol.upper(), ex_date=ex_date, amount=amount,
+                                 source=self.name))
+        return ProviderResult(self.name, endpoint, ok=True, data=tuple(rows),
+                              row_count=len(rows), as_of=dt.datetime.now(dt.timezone.utc))
 
     def get_quote(self, symbol: str, *, asset_class: Side = "stock") -> ProviderResult:
         """Latest price from ``fast_info`` plus the best available as-of stamp."""

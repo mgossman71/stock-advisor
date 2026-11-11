@@ -18,7 +18,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from app.db.base import Base
 import app.db.models  # noqa: F401 - registers every table on Base.metadata
 from app.providers.base import (
-    AnalystAction, Bar, EarningsEvent, FundamentalsSnapshot, MarketDataProvider,
+    AnalystAction, Bar, Dividend, EarningsEvent, FundamentalsSnapshot, MarketDataProvider,
     NewsHeadline, ProviderResult, Quote, UniverseMember,
 )
 
@@ -78,12 +78,14 @@ class FakeProvider(MarketDataProvider):
         news: list[NewsHeadline] | None = None,
         actions: list[AnalystAction] | None = None,
         earnings: list[EarningsEvent] | None = None,
+        dividends: list[Dividend] | None = None,
         fail: set[str] | None = None,
         name: str | None = None,
         missing_fields: tuple[str, ...] = (),
     ) -> None:
         self.bars, self.quote, self.fundamentals = bars, quote, fundamentals
         self.news, self.actions, self.earnings = news, actions, earnings
+        self.dividends = dividends
         self.fail = fail or set()
         self.missing_fields = missing_fields
         self.calls: list[str] = []
@@ -142,6 +144,16 @@ class FakeProvider(MarketDataProvider):
 
     def get_earnings(self, symbol, *, asset_class="stock") -> ProviderResult:
         return self._result("earnings", self.earnings, f"earnings({symbol})")
+
+    def get_dividends(self, symbol, start, end, *, asset_class="stock") -> ProviderResult:
+        # Like yfinance: an empty list is a successful "pays nothing in range".
+        self.calls.append("dividends")
+        if "dividends" in self.fail:
+            return ProviderResult(self.name, f"dividends({symbol})", ok=False,
+                                  error="dividends down")
+        rows = tuple(d for d in (self.dividends or ()) if start <= d.ex_date <= end)
+        return ProviderResult(self.name, f"dividends({symbol})", ok=True, data=rows,
+                              row_count=len(rows))
 
     def get_universe(self, kind: str = "sp500") -> ProviderResult:
         return self._result("universe", [], f"universe:{kind}")

@@ -5,9 +5,16 @@ A call's *signed* outcome (shorts already flipped):
     long:  (price_window / entry - 1) * 100
     short: (1 - price_window / entry) * 100
 
-alpha = outcome - benchmark return over the **same calendar window**, where
-the benchmark leg uses the benchmark close on/before the call date as its
-base.  Windows that have not elapsed stay ``None`` - a half-open window is
+alpha is the call's edge over the market in the call's own direction, over
+the **same calendar window** (the benchmark leg uses the benchmark close
+on/before the call date as its base)::
+
+    long:  alpha = stock_return - benchmark_return
+    short: alpha = benchmark_return - stock_return   (= outcome + benchmark)
+
+A short call claims the stock will *underperform*; grading it against a
+long benchmark would mark every short a loser in a rising market even when
+the stock lagged badly.  ``benchmark_pct_*`` stores the raw index return.  Windows that have not elapsed stay ``None`` - a half-open window is
 "not yet gradeable", not a score.
 
 Status transitions here are honest re-reads of stored bars (stop/target were
@@ -96,7 +103,8 @@ def grade_recommendation(
                 bench_pct = bench_pct.quantize(D("0.0001"))
                 setattr(row, f"benchmark_price_at_{window}d", bench_priced[1])
                 setattr(row, f"benchmark_pct_{window}d", bench_pct)
-                setattr(row, f"alpha_{window}d", (outcome_pct - bench_pct).quantize(D("0.0001")))
+                setattr(row, f"alpha_{window}d",
+                        (outcome_pct - signed * bench_pct).quantize(D("0.0001")))
     session.flush()
     return row
 

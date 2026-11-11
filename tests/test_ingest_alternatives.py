@@ -122,7 +122,8 @@ def test_refresh_symbol_covers_every_capability(session):
     )
     session.commit()
     assert set(outcomes) == {
-        "history", "fundamentals", "quote", "news", "analyst_actions", "earnings"
+        "history", "fundamentals", "dividends", "quote", "news", "analyst_actions",
+        "earnings",
     }
     assert outcomes["history"].written == 1
     assert session.scalar(select(func.count()).select_from(PriceHistory)) == 1

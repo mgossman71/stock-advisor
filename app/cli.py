@@ -32,7 +32,8 @@ from app.trading.accounts import (
     adjust_cash,
     get_or_open_account,
 )
-from app.trading.orders import execute_order, latest_price
+from app.trading.freshness import ensure_fresh_price
+from app.trading.orders import cancel_order, execute_order, latest_price
 from app.trading.snapshots import mark_positions, portfolio_values, write_snapshot
 from app.tracking import RealTradeError, lot_valuations, record_trade, tax_summary
 
@@ -174,10 +175,24 @@ def cmd_trade(args: argparse.Namespace) -> int:
             refresh_symbol(session, provider, args.symbol,
                            with_alternatives=False)
             session.commit()
+        limit = Decimal(args.limit) if args.limit is not None else None
+        ticker = session.scalar(select(Ticker).where(Ticker.symbol == args.symbol.upper()))
+        fresh = (ensure_fresh_price(session, ticker, build_provider(settings))
+                 if ticker is not None else None)
+        if fresh is not None and fresh.refreshed:
+            print(f"refreshed from live quote: {fresh.describe()}")
         result = execute_order(session, account, args.symbol, args.side, args.qty,
-                               settings=settings)
+                               settings=settings, limit_price=limit,
+                               price_not_before=(fresh.required_since
+                                                 if fresh is not None and fresh.stale_reason
+                                                 else None))
         if not result.accepted:
             print(f"order {result.order.status}: {result.reason}")
+            if result.order.status == "pending":
+                session.commit()  # keep the resting limit; the nightly job retries it
+                print(f"order #{result.order.id} rests until filled or "
+                      f"`cancel-order {result.order.id}`")
+                return 0
             return 1
         order = result.order
         priced = latest_price(session, order.ticker_id)
@@ -189,6 +204,19 @@ def cmd_trade(args: argparse.Namespace) -> int:
         print(f"cash after: {account.cash_balance}")
         _print_portfolio(session, account, settings)
         session.commit()
+    return 0
+
+
+def cmd_cancel_order(args: argparse.Namespace) -> int:
+    """Cancel one pending paper limit order."""
+    with session_scope() as session:
+        try:
+            order = cancel_order(session, args.order_id)
+        except ValueError as exc:
+            print(f"cannot cancel: {exc}")
+            return 1
+        session.commit()
+        print(f"order #{order.id} cancelled")
     return 0
 
 
@@ -348,7 +376,13 @@ def build_parser() -> argparse.ArgumentParser:
     trade.add_argument("qty", type=int)
     trade.add_argument("--fetch", action="store_true",
                        help="refresh market data for the symbol before filling")
+    trade.add_argument("--limit", default=None,
+                       help="limit price; an unreachable limit rests and is retried nightly")
     trade.set_defaults(func=cmd_trade)
+
+    cancel = sub.add_parser("cancel-order", help="cancel a pending paper limit order")
+    cancel.add_argument("order_id", type=int)
+    cancel.set_defaults(func=cmd_cancel_order)
 
     sub.add_parser("portfolio", help="account + open positions + snapshot").set_defaults(
         func=cmd_portfolio

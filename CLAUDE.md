@@ -23,7 +23,7 @@ make clean-db-docker           # down -v: ALSO deletes the database volume
 make docker-stats              # stats as the container sees them (volume, not ./data)
 make docker-fetch TICKER=MSFT  # one-shot fetch into the container's volume
 
-make test                      # .venv/bin/python -m pytest -q -> 173 tests, <2s, no network
+make test                      # .venv/bin/python -m pytest -q -> 254 tests, <4s, no network
 make migrate                   # alembic upgrade head
 rm -f data/stock_advisor.db* && make migrate    # rebuild the local DB from scratch
 bash scripts/bootstrap.sh      # .venv (Python 3.11/3.12), install deps, migrate — idempotent
@@ -32,7 +32,8 @@ bash scripts/bootstrap.sh      # .venv (Python 3.11/3.12), install deps, migrate
 .venv/bin/python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
 .venv/bin/python -m app.cli providers / stats / fetch AAPL --period 1y
 .venv/bin/python -m app.cli research AAPL [--refresh]   # full report + calls
-.venv/bin/python -m app.cli trade buy AAPL 10 [--fetch] # paper order
+.venv/bin/python -m app.cli trade buy AAPL 10 [--fetch] [--limit 95]  # paper order
+.venv/bin/python -m app.cli cancel-order N             # withdraw a pending limit
 .venv/bin/python -m app.cli adjust-cash 500 [--withdraw] [--note ...]  # cash in/out, not a trade
 .venv/bin/python -m app.cli record-buy AAPL 10 210.50 [--date --rec N --commission --note]  # real trade
 .venv/bin/python -m app.cli record-sell ... # same args; sells cannot exceed the real ledger
@@ -44,6 +45,9 @@ Table names (get these right): `tickers`, `price_history`, `fundamentals`,
 `news_items`, `analyst_actions`, `earnings_events`, `data_fetch_log`,
 `cash_adjustments` (paper cash deposits/withdrawals), `real_trades` (the
 user's real-broker ledger feeding `app/tracking/` FIFO + tax estimates),
+`stock_splits` (detected splits; real trades are replayed through them),
+`dividends` (per-share cash dividends by ex-date), `dividend_payments`
+(paper dividends booked, unique per account+dividend),
 plus the other trading/advice tables declared in the models.
 
 Ranking rule (`app/research/ranking.py`, deliberate and simple): open calls,
@@ -111,6 +115,31 @@ the README whenever these change), `test_report.py`/`test_advisor.py`
   DB, but for in-memory SQLite (where the database *is* the connection) it discards
   the data being inspected — it broke `app/ingestion/stats.py` until the catalog was
   read on the session's own connection (`sqlite_master` / `information_schema`).
+- **Quote bars are `provisional`.** `ingest_quote` writes today's price with
+  `price_history.provisional = 1` and no OHLC; freshness only counts settled
+  bars, and a quote never overwrites a settled bar.  Before this, one quote a
+  day made history look fresh forever and the post-close quote wiped the
+  day's OHLC - don't reintroduce a freshness check over *all* rows.
+- **Splits rescale stored state once** (`app/ingestion/splits.py`): detection
+  needs >= 2 pre-split overlap bars agreeing on a small-integer ratio, so a
+  single revised bar is never mistaken for one.  Real trades are never
+  rewritten - `app/tracking/lots.py` applies `stock_splits` during replay.
+- **Tax rules** (`app/tracking/taxes.py`): holding period is calendar-based
+  (`holding_class(bought, sold)`), ST/LT net against each other before rates
+  apply, realised figures are current-tax-year only, tax is never negative.
+- **Paper fills need a current-session price** (`app/trading/freshness.py`):
+  order entry points call `ensure_fresh_price` (live quote if the stored price
+  predates the last NY weekday) and pass `price_not_before` to
+  `execute_order` only when that failed.  No holiday calendar on purpose: a
+  successful quote counts as current whatever its date.  `execute_order`
+  stays network-free; tests override `routes_portfolio.order_provider`.
+- **Paper dividends** (`app/trading/dividends.py`): entitlement = current qty
+  minus fills on/after the ex-date; booked on the ex-date into cash *and*
+  `realized_pnl`; 30-day lookback.  The fallback chain treats an empty
+  dividend list as success (non-payers), like an empty quote.
+- **Writes refuse cross-site requests** (`same_origin_writes` in
+  `app/main.py`): no login exists, so this is the only CSRF guard.  Compose
+  publishes the port on `127.0.0.1` only for the same reason.
 - `data/stock_advisor.db*` is git-ignored — delete it and `make migrate` for a clean rebuild.
 - A real `.env` may hold `FRED_API_KEY`; never print its value.
 - **Scheduler ownership:** the app container arms APScheduler (nightly cron);

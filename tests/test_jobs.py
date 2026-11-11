@@ -110,3 +110,34 @@ def test_status_rows_are_logged(session, settings):
     run_nightly(session, _provider(), settings=settings, today=DAY)
     systems = session.query(DataFetchLog).filter(DataFetchLog.provider == "system").all()
     assert len(systems) == 1  # exactly one short_borrow marker for the day
+
+
+def test_real_ledger_holdings_are_refreshed_nightly(session, settings):
+    """A real holding outside the universe/watchlist must still get prices."""
+    from app.jobs import target_symbols
+    from app.tracking import record_trade
+
+    _seed(session)
+    record_trade(session, "OWNED", "buy", D("3"), D("50"), trade_date=DAY)
+    record_trade(session, "SOLD", "buy", D("3"), D("50"), trade_date=DAY)
+    record_trade(session, "SOLD", "sell", D("3"), D("55"), trade_date=DAY)
+    symbols = target_symbols(session, settings)
+    assert "OWNED" in symbols
+    assert "SOLD" not in symbols  # fully closed: nothing to mark
+
+
+def test_nightly_books_dividends_once(session, settings):
+    from app.db.models import Dividend
+
+    _seed(session)
+    account = get_or_open_account(session, settings)
+    assert execute_order(session, account, "ACME", "buy", 10, settings=settings).accepted
+    acme = ensure_ticker(session, "ACME")
+    # Ex-date tomorrow relative to the fill: the fill was at the DAY-1 bar.
+    session.add(Dividend(ticker_id=acme.id, ex_date=DAY, amount=D("1.25"), source="fake"))
+    session.commit()
+
+    first = run_nightly(session, _provider(), settings=settings, today=DAY)
+    assert first.dividends_booked == D("12.50")
+    second = run_nightly(session, _provider(), settings=settings, today=DAY)
+    assert second.dividends_booked == D("0")

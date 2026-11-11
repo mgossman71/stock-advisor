@@ -22,9 +22,17 @@ local script — it keeps working even when CDN scripts are blocked.
    (ignored calls are kept so the scoreboard can grade the decision). The
    dashboard's "Top ideas today" list ranks open calls by confidence (one per
    ticker, newest wins) and tags tickers you already hold in either ledger.
-- **Paper trading (Portfolio page — fake money)** — one account, market/
-   limit-style simulated fills at the
-   latest stored close ± slippage, full short support with borrow accrual,
+- **Paper trading (Portfolio page — fake money)** — one account, market and
+   limit simulated fills at the latest *session's* price ± slippage.  An order
+   never fills at an old price: if the stored price predates the latest US
+   trading day (New York time), a live quote is fetched first, and if none is
+   available the order is refused with the price's age (the ticket shows each
+   price's date).  Cash dividends are booked on the ex-date — longs are paid,
+   shorts pay — to whoever held at the prior close, once per dividend (an
+   unreachable limit rests as `pending`, is retried nightly, and can be
+   cancelled), commissions carried in cost basis so realised P&L matches the
+   cash that moved, full short support with Reg-T style initial margin
+   (`SHORT_MARGIN_PCT`) and daily borrow debited from cash, and
    risk-per-trade position sizing.  The order ticket shows a live
    **est. trade cost** (qty × latest close; prefilled server-side, so it is
    correct even with JS disabled).  You set the balance: deposits/withdrawals
@@ -35,13 +43,25 @@ local script — it keeps working even when CDN scripts are blocked.
    drove them).  The two ledgers are deliberately separate: simulated fills
    never appear here, keeping real cost basis and tax estimates clean.
    FIFO cost basis, gain/loss
-   and *estimated* tax liability classified by holding period (≤365d
-   short-term / >365d long-term) at your configured rates; the trade form
-   shows the live **cost of this trade** (qty × fill price).  Estimates, not
-   tax advice; wash sales not yet handled.
+   and *estimated* tax liability classified by holding period (long-term only
+   when sold after the one-year anniversary, so leap years count) at your
+   configured rates.  Short- and long-term results are netted against each
+   other Schedule-D style, realised figures cover the current tax year, and
+   a net loss shows as a deductible loss (up to $3,000/yr), never as negative
+   tax.  A trade is validated against the whole date-ordered ledger, so a
+   back-dated sell needs the shares on *that* date.  The trade form shows the
+   live **cost of this trade** (qty × fill price).  Estimates, not tax
+   advice; wash sales and prior-year carryforwards not yet handled.
 - **Monitoring** — a nightly job (APScheduler + manual `POST /jobs/refresh`)
-  refreshes prices, screens the universe, grades every call at 30/90/180 days
-  against `^GSPC`, evaluates alerts and writes the daily equity snapshot.
+  refreshes prices (universe, watchlist, paper positions, real holdings,
+  open calls), retries pending limits, screens the universe, grades every
+  call at 30/90/180 days against `^GSPC`, evaluates alerts and writes the
+  daily equity snapshot.  A live quote prices today as a *provisional* bar
+  that the next history fetch replaces; it never overwrites a settled bar.
+  Stock splits are detected when re-fetched history disagrees with storage by
+  a clean ratio (2:1, 3:2, 1:10 …): old bars, paper positions, pending limits,
+  calls and price alerts are rescaled once, and real trades are replayed
+  through the recorded split without editing your entries.
 - **Stores everything** — all prices, research, calls, trades and snapshots
   live in SQLite; `GET /api/export.json` dumps it all, and the DB file itself
   is the backup (copy `data/stock_advisor.db`).
@@ -70,7 +90,8 @@ Copy `.env.example` to `.env`. Nothing secret is ever in code.
 | `FINNHUB_API_KEY`, `ALPHAVANTAGE_API_KEY`, `POLYGON_API_KEY` | present = ready for a keyed provider to be swapped in behind `MarketDataProvider` | unset |
 | `INITIAL_CASH` | paper account start | `100000` |
 | `COMMISSION_PER_SHARE` / `MIN_COMMISSION` / `SLIPPAGE_BPS` | fill friction | `0` / `0` / `5` |
-| `SHORT_BORROW_APY` | daily borrow charge on shorts | `0.03` |
+| `SHORT_BORROW_APY` | daily borrow charge on shorts (debited from cash) | `0.03` |
+| `SHORT_MARGIN_PCT` | equity must be ≥ this % of total short value after a short | `50` |
 | `RISK_PER_TRADE_PCT` | sizing helper risk budget | `1.0` |
 | `BENCHMARK_SYMBOL` / `VIX_SYMBOL` | grading + regime panel | `^GSPC` / `^VIX` |
 | `NIGHTLY_CRON` | APScheduler cron (UTC) | `15 21 * * *` |
@@ -117,8 +138,13 @@ Each recommendation gets a `recommendation_outcomes` row. For every window
 ```
 outcome% = (price_window / entry − 1) × 100          (shorts: sign flipped)
 benchmark% = same window on ^GSPC, same base date
-alpha% = outcome% − benchmark%
+alpha% = outcome% − benchmark%                       (longs)
+alpha% = outcome% + benchmark%                       (shorts)
 ```
+
+A short call claims the stock will *underperform the market*, so its alpha
+is `benchmark% − stock%`.  Grading shorts against a long benchmark would
+mark every short a loser in a rising market even when the stock lagged.
 
 Status auto-updates when a later bar actually touches the stop/target
 (`hit_stop`/`hit_target`), or on age (`expired`). The scoreboard shows
@@ -128,7 +154,7 @@ pages — a call with an unfinished window is *not graded*, not "0".
 ## Tests
 
 ```
-make test   # 211 tests, <3s, no network
+make test   # 254 tests, <4s, no network
 ```
 
 Pinned invariants: P&L math (incl. shorts + borrow), scoring thresholds

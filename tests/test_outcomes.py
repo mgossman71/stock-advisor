@@ -59,14 +59,19 @@ def test_long_alpha_30d(seeded):
 
 
 def test_short_alpha_is_direction_correct(seeded):
-    """Short 80 -> 72 is a +10 % signed outcome; alpha +5 % vs SPX."""
+    """Short 80 -> 72 is a +10 % signed outcome while SPX rose 5 %.
+
+    A short claims the stock will underperform the market: it lagged by 15
+    points, so alpha = benchmark - stock = 5 - (-10) = +15.
+    """
     _bars(seeded, "FADE", [(DAY0 + dt.timedelta(days=i), D("80")) for i in range(30)] +
           [(DAY0 + dt.timedelta(days=i), D("72")) for i in range(30, 61)])
     rec = _rec(seeded, "FADE", "short", D("80"), DAY0)
     outcome = grade_recommendation(seeded, rec, benchmark_symbol="SPX",
                                    today=DAY0 + dt.timedelta(days=40))
     assert outcome.outcome_pct_30d == D("10.0000")
-    assert outcome.alpha_30d == D("5.0000")
+    assert outcome.benchmark_pct_30d == D("5.0000")
+    assert outcome.alpha_30d == D("15.0000")
 
 
 def test_grading_is_idempotent(seeded):

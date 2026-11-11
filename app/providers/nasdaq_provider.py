@@ -23,7 +23,7 @@ from curl_cffi.requests.exceptions import RequestException
 
 from app.config import Settings
 from app.ingestion.normalize import (
-    bar_from_nasdaq_z, clean_text, parse_datetime, percent_to_points,
+    bar_from_nasdaq_z, clean_text, parse_datetime, percent_to_points, percent_to_ratio,
     ratio, split_pair, to_decimal,
 )
 from app.providers.base import (
@@ -224,9 +224,11 @@ class NasdaqProvider(MarketDataProvider):
             pe_forward=ratio(label("ForwardPeRatio")),
             ps=ratio(label("PsRatio")),
             pb=ratio(label("PtbookRatio")),
-            debt_to_equity=ratio(label("DebtEquityRatio")),
+            # Nasdaq prints both as percentages ("105.58%"): ROE is stored as
+            # percent points (105.58), D/E as a plain ratio (1.0558).
+            debt_to_equity=percent_to_ratio(label("DebtEquityRatio")),
             return_on_equity=percent_to_points(
-                label("ReturnOnAverageEquity"), source_is_fraction=True
+                label("ReturnOnAverageEquity"), source_is_fraction=False
             ),
             dividend_yield=percent_to_points(label("Yield"), source_is_fraction=False),
             current_price=to_decimal(label("PreviousClose")),

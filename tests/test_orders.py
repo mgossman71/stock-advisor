@@ -155,3 +155,76 @@ def test_account_is_created_once(session, settings):
     again = get_or_open_account(session, settings)
     assert session.query(Account).count() == 1
     assert again.cash_balance == D("100000")
+
+
+def test_borrow_is_debited_from_cash_so_equity_reflects_it(session, settings):
+    """Borrow cost must hit the equity curve, not only realized_pnl."""
+    from app.trading.orders import accrue_short_borrow
+
+    _seed_price(session, "BORR", DAY, D("100.00"))
+    account = get_or_open_account(session, settings)
+    assert execute_order(session, account, "BORR", "short", 10, settings=settings).accepted
+    before = portfolio_values(session, account)["total_value"]
+    charged = accrue_short_borrow(session, account, DAY, settings=settings)
+    assert charged == D("0.10")
+    assert account.cash_balance == D("101000.00") - charged
+    assert portfolio_values(session, account)["total_value"] == before - charged
+
+
+def test_buy_commission_lands_in_cost_basis_and_realised_pnl(session, settings):
+    """Round trip with 1.00 commission each way: realised = gain - both commissions."""
+    friction = Settings(initial_cash=D("100000"), slippage_bps=D("0"),
+                        commission_per_share=D("0"), min_commission=D("1"))
+    _seed_price(session, "FEES", DAY, D("100.00"))
+    account = get_or_open_account(session, friction)
+    assert execute_order(session, account, "FEES", "buy", 10, settings=friction).accepted
+    position = session.query(Position).one()
+    assert position.avg_cost == D("100.1")  # (1000 + 1) / 10
+    assert position.unrealized_pnl == D("-1.0")  # marked at the fill: down the commission
+    _seed_price(session, "FEES", DAY + dt.timedelta(days=1), D("110.00"))
+    assert execute_order(session, account, "FEES", "sell", 10, settings=friction).accepted
+    assert position.realized_pnl == D("98.0")  # 100 gain - 1 - 1
+    # ...which is exactly what the cash balance moved by.
+    assert account.cash_balance - D("100000") == position.realized_pnl
+
+
+def test_short_needs_initial_margin(session, settings):
+    """Equity 100k at 50 % margin supports at most 200k of short market value."""
+    _seed_price(session, "HUGE", DAY, D("1000.00"))
+    account = get_or_open_account(session, settings)
+    ok = execute_order(session, account, "HUGE", "short", 200, settings=settings)
+    assert ok.accepted  # exposure 200k, required 100k == equity
+    too_much = execute_order(session, account, "HUGE", "short", 1, settings=settings)
+    assert not too_much.accepted and "insufficient margin" in too_much.reason
+    assert too_much.order.status == "rejected"
+    assert session.query(Position).one().qty == D("-200")
+
+
+def test_pending_limit_fills_when_price_reaches_it(session, settings):
+    from app.trading.orders import process_pending_orders
+
+    _seed_price(session, "WAIT", DAY, D("100.00"))
+    account = get_or_open_account(session, settings)
+    resting = execute_order(session, account, "WAIT", "buy", 5,
+                            limit_price=D("95"), settings=settings).order
+    assert process_pending_orders(session, account, settings=settings)["pending"] == 1
+    _seed_price(session, "WAIT", DAY + dt.timedelta(days=1), D("94.00"))
+    assert process_pending_orders(session, account, settings=settings)["filled"] == 1
+    assert resting.status == "filled" and resting.fill_price == D("94.00")
+    assert account.cash_balance == D("100000") - D("470.00")
+    assert session.query(Position).one().qty == D("5")
+
+
+def test_pending_limit_can_be_cancelled(session, settings):
+    from app.trading.orders import cancel_order, process_pending_orders
+
+    _seed_price(session, "CNCL", DAY, D("100.00"))
+    account = get_or_open_account(session, settings)
+    order = execute_order(session, account, "CNCL", "buy", 5,
+                          limit_price=D("95"), settings=settings).order
+    cancel_order(session, order.id)
+    assert order.status == "cancelled"
+    _seed_price(session, "CNCL", DAY + dt.timedelta(days=1), D("90.00"))
+    assert process_pending_orders(session, account, settings=settings)["filled"] == 0
+    with pytest.raises(ValueError):
+        cancel_order(session, order.id)  # history is immutable once not pending

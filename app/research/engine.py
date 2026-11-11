@@ -111,28 +111,27 @@ class RuleBasedAdvisor:
         """Price far above consensus target AND >= 2 net downgrades -> short setup.
 
         Returns the (negative) upside-to-target when the setup fires, else None.
+        Reads the numeric counts from ``payload["indicators"]``; reports built
+        before those keys existed fall back to the cited evidence row
+        (``"+3/-5"``).
         """
-        comp = next(
-            (c for s in payload.get("sub_scores", []) if s.get("name") == "sentiment"
-             for c in s.get("components", []) if c.get("name") == "analyst_actions_90d"),
-            None,
-        )
-        evidence = next(
-            (e for e in payload.get("evidence", [])
-             if e.get("label") == "upside to consensus target %"),
-            None,
-        )
-        if not comp or not evidence:
+        ind = payload.get("indicators", {})
+        up, down = ind.get("analyst_upgrades_90d"), ind.get("analyst_downgrades_90d")
+        upside = _dec(ind.get("target_upside_pct"))
+        evidence = {e.get("label"): e.get("value") for e in payload.get("evidence", [])}
+        if up is None or down is None:
+            raw = evidence.get("analyst actions 90d")
+            try:
+                plus, minus = str(raw).split("/-")
+                up, down = int(plus.lstrip("+")), int(minus)
+            except (AttributeError, ValueError):
+                return None
+        if upside is None:
+            upside = _dec(evidence.get("upside to consensus target %"))
+        if upside is None:
             return None
-        note = comp.get("note", "")
-        try:
-            up, down = (int(x) for x in note.split("+")[1].split(" ")[0].split("/-"))
-        except (IndexError, ValueError):
-            return None
-        upside = _dec(evidence.get("value"))
-        if downside_enough := (down - up >= 2):
-            if upside is not None and upside <= self.OVEREXTENDED_UPSIDE_PCT:
-                return upside
+        if down - up >= -self.DOWNGRADE_NET and upside <= self.OVEREXTENDED_UPSIDE_PCT:
+            return upside.quantize(D("0.01"))
         return None
 
     def _confidence(self, magnitude: Decimal, base: Decimal, missing: list) -> Decimal:

@@ -44,6 +44,12 @@ def client(tmp_path, monkeypatch):
     dispose_all()
     Base.metadata.create_all(get_engine())
     from app.main import app  # imported late: sees the patched settings
+    from tests.conftest import FakeProvider
+
+    # Orders refresh stale prices from a live quote; tests never hit the
+    # network, so by default no quote is available (override per test).
+    monkeypatch.setattr("app.web.routes_portfolio.order_provider",
+                        lambda settings: FakeProvider())
     with TestClient(app) as c:
         yield c
     dispose_all()
@@ -281,10 +287,21 @@ def test_investments_prefill_uses_latest_stored_close(client):
 # ------------------------------------------------ paper vs real + cost readout
 
 
-def test_paper_fill_lands_on_portfolio_not_investments(client):
+def _live_quote(monkeypatch, symbol: str, price: str) -> None:
+    """Make the order ticket's freshness refresh return this live quote."""
+    from app.providers.base import Quote
+    from tests.conftest import FakeProvider
+
+    quote = Quote(symbol=symbol, price=D(price), as_of=dt.datetime.now(dt.timezone.utc))
+    monkeypatch.setattr("app.web.routes_portfolio.order_provider",
+                        lambda settings: FakeProvider(quote=quote))
+
+
+def test_paper_fill_lands_on_portfolio_not_investments(client, monkeypatch):
     """The AIZ confusion: simulated buys are PAPER and must surface on the
     Portfolio page only - the Investments page is the real-money ledger."""
     _seed_open_calls()
+    _live_quote(monkeypatch, "PRC", "102.00")
     resp = client.post("/portfolio/order",
                        data={"symbol": "PRC", "side": "buy", "qty": "6"})
     assert resp.status_code == 200
@@ -326,3 +343,51 @@ def test_cost_script_is_local_not_cdn(client):
     html = client.get("/portfolio").text
     assert re.search(r'<script defer src="/static/app\.js\?v=\d+">','' + html)
     assert client.get("/static/app.js").status_code == 200
+
+
+def test_cross_site_posts_are_refused(client):
+    """No login exists, so another site must not be able to submit our forms."""
+    form = {"symbol": "XSRF", "side": "buy", "qty": "1", "price": "10"}
+    evil = client.post("/investments/trade", data=form, follow_redirects=False,
+                       headers={"Origin": "https://evil.example"})
+    assert evil.status_code == 403
+    fetch_meta = client.post("/investments/trade", data=form, follow_redirects=False,
+                             headers={"Sec-Fetch-Site": "cross-site"})
+    assert fetch_meta.status_code == 403
+    same = client.post("/investments/trade", data=form, follow_redirects=False,
+                       headers={"Origin": "http://testserver"})
+    assert same.status_code == 303
+
+
+def test_error_flash_is_query_encoded(client):
+    """A message with '&' or '#' must survive the redirect intact."""
+    resp = client.post("/investments/trade", follow_redirects=False, data={
+        "symbol": "ENC", "side": "sell", "qty": "1", "price": "10"})
+    assert resp.status_code == 303
+    location = resp.headers["location"]
+    assert " " not in location and location.startswith("/investments?err=")
+    page = client.get(location)
+    assert "cannot record sell of ENC" in page.text
+
+
+def test_stale_price_order_is_refused_without_a_live_quote(client):
+    """PRC's newest bar is from January; with no quote the ticket must refuse."""
+    _seed_open_calls()
+    resp = client.post("/portfolio/order", data={"symbol": "PRC", "side": "buy", "qty": "1"})
+    assert "stale price" in resp.text and "2026-01-09" in resp.text
+    assert "PAPER account: filled" not in resp.text
+
+
+def test_stale_price_order_fills_at_the_live_quote(client, monkeypatch):
+    _seed_open_calls()
+    _live_quote(monkeypatch, "PRC", "120.00")
+    resp = client.post("/portfolio/order", data={"symbol": "PRC", "side": "buy", "qty": "1"})
+    assert "PAPER account: filled buy 1 PRC @ 120.06" in resp.text  # 120 + 5 bps slippage
+    assert "live quote" in resp.text
+
+
+def test_ticket_shows_price_age(client):
+    _seed_open_calls()
+    html = client.get("/portfolio").text
+    assert 'data-asof="2026-01-09"' in html and 'data-session="' in html
+    assert 'id="paper-asof"' in html

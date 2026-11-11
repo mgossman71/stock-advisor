@@ -5,6 +5,10 @@ Everything here is :class:`~decimal.Decimal`.  Trades are replayed in
 FIFO.  Cost basis carries the buy commission (added) and proceeds carry the
 sell commission (subtracted), allocated pro-rata per share so partial fills
 across lots stay exact.
+
+Splits recorded in ``stock_splits`` are applied during replay: a trade dated
+before a split is read as ``qty * to/from`` shares at ``price * from/to``.
+The stored rows stay exactly as the user entered them.
 """
 
 from __future__ import annotations
@@ -17,8 +21,9 @@ from decimal import Decimal
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.db.models import RealTrade, Ticker
+from app.db.models import RealTrade, StockSplit, Ticker
 from app.ingestion.ingest import ensure_ticker
+from app.ingestion.splits import splits_by_ticker
 
 ZERO = Decimal("0")
 
@@ -33,7 +38,7 @@ class OpenLot:
     """One still-open buy lot: original trade, remaining qty, unit cost."""
 
     trade: RealTrade
-    remaining: Decimal
+    remaining: Decimal       # in today's (post-split) share basis
     cost_per_share: Decimal  # includes the buy commission, per share
 
 
@@ -56,26 +61,45 @@ class RealizedMatch:
         return (self.sell.trade_date - self.buy.trade_date).days
 
 
-def _buy_cost_per_share(t: RealTrade) -> Decimal:
-    return (t.qty * t.price + t.commission) / t.qty
+def _split_factor(t: RealTrade, splits: dict[int, list[StockSplit]]) -> Decimal:
+    """Shares-per-entered-share multiplier for splits after ``t``'s trade date."""
+    factor = Decimal("1")
+    for split in splits.get(t.ticker_id, ()):
+        if split.split_date > t.trade_date:
+            factor = factor * Decimal(split.split_to) / Decimal(split.split_from)
+    return factor
 
 
-def _sell_proceeds_per_share(t: RealTrade) -> Decimal:
-    return (t.qty * t.price - t.commission) / t.qty
+def _buy_cost_per_share(t: RealTrade, qty: Decimal) -> Decimal:
+    return (t.qty * t.price + t.commission) / qty
 
 
-def _replay(trades: list[RealTrade]) -> tuple[list[OpenLot], list[RealizedMatch]]:
+def _sell_proceeds_per_share(t: RealTrade, qty: Decimal) -> Decimal:
+    return (t.qty * t.price - t.commission) / qty
+
+
+def _replay_key(t: RealTrade) -> tuple:
+    # A not-yet-flushed candidate (id None) sorts after same-day rows, which
+    # is where it will land once inserted.
+    return (t.ticker_id, t.trade_date, t.id if t.id is not None else float("inf"))
+
+
+def _replay(
+    trades: list[RealTrade], splits: dict[int, list[StockSplit]] | None = None,
+) -> tuple[list[OpenLot], list[RealizedMatch]]:
     """Single chronological pass -> open lots (per symbol, FIFO order) + matches."""
+    splits = splits or {}
     queues: dict[int, deque[OpenLot]] = {}
     matches: list[RealizedMatch] = []
-    for t in sorted(trades, key=lambda t: (t.ticker_id, t.trade_date, t.id)):
+    for t in sorted(trades, key=_replay_key):
+        qty = t.qty * _split_factor(t, splits)
         if t.side == "buy":
             queues.setdefault(t.ticker_id, deque()).append(
-                OpenLot(t, t.qty, _buy_cost_per_share(t))
+                OpenLot(t, qty, _buy_cost_per_share(t, qty))
             )
             continue
         queue = queues.setdefault(t.ticker_id, deque())
-        need, proceeds = t.qty, _sell_proceeds_per_share(t)
+        need, proceeds = qty, _sell_proceeds_per_share(t, qty)
         while need > 0 and queue:
             lot = queue[0]
             take = min(need, lot.remaining)
@@ -86,8 +110,8 @@ def _replay(trades: list[RealTrade]) -> tuple[list[OpenLot], list[RealizedMatch]
                 queue.popleft()
         if need > 0:  # defensive: record_trade validates, but a corrupt ledger must not silently pass
             raise RealTradeError(
-                f"ledger inconsistent: sell of trade #{t.id} exceeds open quantity "
-                f"by {need} shares"
+                f"sell of {t.qty:,.4f} on {t.trade_date} exceeds the shares held "
+                f"on that date by {need:,.4f}"
             )
     return [lot for q in queues.values() for lot in q], matches
 
@@ -98,9 +122,13 @@ def _all_trades(session: Session) -> list[RealTrade]:
     ).all()
 
 
+def _replay_all(session: Session) -> tuple[list[OpenLot], list[RealizedMatch]]:
+    return _replay(_all_trades(session), splits_by_ticker(session))
+
+
 def open_lots(session: Session, symbol: str | None = None) -> list[OpenLot]:
     """Open lots FIFO-oldest-first, optionally filtered by one symbol."""
-    lots, _ = _replay(_all_trades(session))
+    lots, _ = _replay_all(session)
     if symbol:
         lots = [lot for lot in lots if lot.trade.ticker.symbol == symbol.upper()]
     return lots
@@ -108,7 +136,7 @@ def open_lots(session: Session, symbol: str | None = None) -> list[OpenLot]:
 
 def realized_matches(session: Session) -> list[RealizedMatch]:
     """Every FIFO buy->sell pairing implied by the ledger so far."""
-    _, matches = _replay(_all_trades(session))
+    _, matches = _replay_all(session)
     return matches
 
 
@@ -116,7 +144,7 @@ def holdings(session: Session) -> list[dict[str, object]]:
     """Per-symbol roll-up: qty, total cost basis, latest stored mark (or None)."""
     from app.trading.orders import latest_price  # local import: keep tracking independent of orders' weight
 
-    lots, _ = _replay(_all_trades(session))
+    lots, _ = _replay_all(session)
     by_symbol: dict[str, dict[str, object]] = {}
     for lot in lots:
         symbol = lot.trade.ticker.symbol
@@ -138,7 +166,7 @@ def holdings(session: Session) -> list[dict[str, object]]:
 
 
 def open_quantity(session: Session, ticker_id: int) -> Decimal:
-    lots, _ = _replay(_all_trades(session))
+    lots, _ = _replay_all(session)
     return sum((lot.remaining for lot in lots if lot.trade.ticker_id == ticker_id), ZERO)
 
 
@@ -154,7 +182,12 @@ def record_trade(
     recommendation_id: int | None = None,
     note: str | None = None,
 ) -> RealTrade:
-    """Validate + insert one real buy/sell.  Sells cannot exceed open quantity."""
+    """Validate + insert one real buy/sell.
+
+    The candidate is replayed with the ticker's whole ledger in date order, so
+    a back-dated sell is rejected unless the shares were held *on that date* -
+    and a back-dated buy cannot be slotted in after sells that needed it.
+    """
     side = side.lower()
     if side not in ("buy", "sell"):
         raise RealTradeError("side must be buy or sell")
@@ -166,17 +199,18 @@ def record_trade(
     if Decimal(commission) < 0:
         raise RealTradeError("commission cannot be negative")
     ticker = ensure_ticker(session, symbol)
-    if side == "sell" and qty > open_quantity(session, ticker.id):
-        held = open_quantity(session, ticker.id)
-        raise RealTradeError(
-            f"cannot sell {qty:,.4f} {ticker.symbol}: only {held:,.4f} held "
-            f"in the real ledger"
-        )
     trade = RealTrade(
         ticker_id=ticker.id, recommendation_id=recommendation_id, side=side,
         qty=qty, price=price, commission=Decimal(commission),
         trade_date=trade_date or dt.date.today(), note=note,
     )
+    history = session.scalars(
+        select(RealTrade).where(RealTrade.ticker_id == ticker.id)
+    ).all()
+    try:
+        _replay([*history, trade], splits_by_ticker(session))
+    except RealTradeError as exc:
+        raise RealTradeError(f"cannot record {side} of {ticker.symbol}: {exc}") from None
     session.add(trade)
     session.flush()
     return trade

@@ -35,7 +35,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
 from app.db.models_advice import Recommendation
-from app.db.models_market import Ticker
+from app.db.models_market import Dividend, Ticker
 from app.db.types import MONEY, PCT, PRICE, QTY
 
 
@@ -260,3 +260,33 @@ class RealTrade(Base):
     def __repr__(self) -> str:  # pragma: no cover - debugging aid
         return f"<RealTrade {self.side} {self.qty} @ {self.price} {self.trade_date}>"
 
+
+
+class DividendPayment(Base):
+    """One dividend booked to the paper account: credit (long) or charge (short).
+
+    ``qty`` is the signed entitlement (negative = short owes the dividend);
+    ``total`` is the signed cash moved.  Unique per (account, dividend), which
+    is what makes nightly re-runs unable to double-book.
+    """
+
+    __tablename__ = "dividend_payments"
+    __table_args__ = (
+        UniqueConstraint("account_id", "dividend_id", name="uq_dividend_payments_acct_div"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    account_id: Mapped[int] = mapped_column(
+        ForeignKey("accounts.id", ondelete="CASCADE"), index=True
+    )
+    dividend_id: Mapped[int] = mapped_column(
+        ForeignKey("dividends.id", ondelete="CASCADE"), index=True
+    )
+    qty: Mapped[Decimal] = mapped_column(QTY, nullable=False)
+    total: Mapped[Decimal] = mapped_column(MONEY, nullable=False)
+    booked_at: Mapped[dt.datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    account: Mapped[Account] = relationship()
+    dividend: Mapped[Dividend] = relationship()

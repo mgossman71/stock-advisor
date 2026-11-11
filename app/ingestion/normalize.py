@@ -120,6 +120,15 @@ def percent_to_points(value: Any, *, source_is_fraction: bool) -> Decimal | None
     return (dec * 100) if source_is_fraction else dec
 
 
+def percent_to_ratio(value: Any) -> Decimal | None:
+    """A percentage rendered as text/points (``"105.58%"``) -> ratio (``1.0558``).
+
+    Nasdaq prints debt/equity this way, while the schema stores it as a ratio.
+    """
+    dec = to_decimal(value)
+    return None if dec is None else dec / 100
+
+
 def ratio(value: Any) -> Decimal | None:
     """Coerce a unitless multiple (P/E, P/B, beta, D/E) to ``Decimal``."""
     return to_decimal(value)

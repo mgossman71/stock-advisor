@@ -17,6 +17,8 @@ alembic>=1.13
 pydantic>=2.7,<3
 pydantic-settings>=2.3
 python-dotenv>=1.0
+# IANA zones for zoneinfo (America/New_York trading days); slim images lack them.
+tzdata>=2024.1
 
 # Market data
 yfinance>=0.2.40

@@ -165,3 +165,15 @@ def test_bar_from_nasdaq_z_drops_rows_without_a_close():
 def test_to_int_rounds_provider_volume_strings():
     assert to_int("29,756,060.192259") == 29756060
     assert to_int(None) is None
+
+
+def test_percent_text_to_ratio_for_nasdaq_debt_to_equity():
+    from app.ingestion.normalize import percent_to_ratio
+
+    assert percent_to_ratio("105.58%") == Decimal("1.0558")
+    assert percent_to_ratio("--") is None
+
+
+def test_nasdaq_percent_roe_stays_in_points():
+    # "142.3%" is already percent points - scaling it as a fraction gave 14230.
+    assert percent_to_points("142.3%", source_is_fraction=False) == Decimal("142.3")

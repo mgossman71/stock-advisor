@@ -32,7 +32,9 @@ services:
   app:
     <<: *app
     ports:
-      - "8000:8000"
+      # Loopback only: the app has no login, so it must not be reachable from
+      # the LAN.  Change deliberately (and add auth) if you need remote access.
+      - "127.0.0.1:8000:8000"
     init: true
     restart: unless-stopped
     healthcheck:

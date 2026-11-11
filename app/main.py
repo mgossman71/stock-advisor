@@ -10,11 +10,12 @@ from __future__ import annotations
 
 import datetime as dt
 import logging
+from urllib.parse import urlsplit
 
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import select, text
 
@@ -37,6 +38,30 @@ app.mount("/static", StaticFiles(directory=str(BASE_DIR / "web" / "static")), na
 
 for router in routers:
     app.include_router(router)
+
+_UNSAFE_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
+
+
+@app.middleware("http")
+async def same_origin_writes(request: Request, call_next):
+    """Refuse state-changing requests sent from another site (CSRF guard).
+
+    There is no login, so any web page the user visits could otherwise POST
+    to ``localhost:8000`` and record trades.  Browsers stamp cross-site
+    requests with ``Origin``/``Sec-Fetch-Site``; requests with neither (curl,
+    the test client, the CLI) are not browser-forged and pass.
+    """
+    if request.method in _UNSAFE_METHODS:
+        host = request.headers.get("host", "")
+        origin = request.headers.get("origin") or request.headers.get("referer")
+        fetch_site = request.headers.get("sec-fetch-site")
+        if fetch_site == "cross-site" or (
+            origin and origin != "null" and urlsplit(origin).netloc != host
+        ):
+            return PlainTextResponse("cross-site request refused", status_code=403)
+        if origin == "null":
+            return PlainTextResponse("cross-site request refused", status_code=403)
+    return await call_next(request)
 
 
 def _cron_trigger(expression: str) -> CronTrigger:

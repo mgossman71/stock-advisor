@@ -5,8 +5,13 @@ Idempotency rules (the nightly job calls this constantly, and
 
 * Bars already present for a (ticker, date) are updated in place, never
   duplicated - the unique constraint guarantees it.
-* A range already covered up to ``freshness_days`` is skipped and logged as
-  ``skipped_fresh``; that cache is what keeps yfinance quiet.
+* A range whose latest *settled* bar reaches ``end - freshness_days`` is
+  skipped and logged as ``skipped_fresh``; that cache is what keeps yfinance
+  quiet.  Quote-priced (``provisional``) rows never count as fresh, otherwise
+  one live quote would stop real bars from ever being fetched again.
+* A live quote never overwrites a settled bar for the same date.
+* A re-fetched range that disagrees with storage by a clean split factor
+  triggers ``app.ingestion.splits.apply_split`` before the upsert.
 * Every provider call writes exactly one ``data_fetch_log`` row with status
   ``ok`` / ``empty`` / ``error`` / ``skipped_fresh``.
 """
@@ -22,9 +27,10 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.db.models import (
-    AnalystAction, DataFetchLog, EarningsEvent, Fundamentals, NewsItem,
+    AnalystAction, DataFetchLog, Dividend, EarningsEvent, Fundamentals, NewsItem,
     PriceHistory, Ticker,
 )
+from app.ingestion.splits import apply_split, detect_split
 from app.providers.base import (
     Bar, EarningsEvent as EarningsPayload, FundamentalsSnapshot, MarketDataProvider,
     NewsHeadline, ProviderResult, Quote, Side,
@@ -49,14 +55,18 @@ class IngestStats:
 def ensure_ticker(
     session: Session, symbol: str, *, name: str | None = None, sector: str | None = None,
     industry: str | None = None, currency: str | None = None,
-    market_cap: Decimal | None = None, asset_class: str = "stock",
+    market_cap: Decimal | None = None, asset_class: str | None = None,
     in_universe: bool | None = None, in_watchlist: bool | None = None,
 ) -> Ticker:
-    """Return the ``Ticker`` for ``symbol``, creating it when missing."""
+    """Return the ``Ticker`` for ``symbol``, creating it when missing.
+
+    ``asset_class`` defaults to ``stock`` for a new row only; an existing
+    ticker keeps its class unless one is passed explicitly.
+    """
     symbol = symbol.upper().strip()
     ticker = session.scalar(select(Ticker).where(Ticker.symbol == symbol))
     if ticker is None:
-        ticker = Ticker(symbol=symbol, asset_class=asset_class)
+        ticker = Ticker(symbol=symbol, asset_class=asset_class or "stock")
         session.add(ticker)
         session.flush()
     # Only fill in what we actually have - never overwrite a good value with None.
@@ -103,16 +113,33 @@ def covered_range(
     return min(rows), max(rows), len(rows)
 
 
+def latest_settled_date(session: Session, ticker_id: int, end: dt.date) -> dt.date | None:
+    """Newest non-provisional bar on or before ``end`` (quotes don't count)."""
+    return session.scalar(
+        select(PriceHistory.date).where(
+            PriceHistory.ticker_id == ticker_id,
+            PriceHistory.date <= end,
+            PriceHistory.provisional.is_(False),
+        ).order_by(PriceHistory.date.desc()).limit(1)
+    )
+
+
 def ingest_history(
     session: Session, provider: MarketDataProvider, symbol: str, start: dt.date, end: dt.date,
-    *, asset_class: Side = "stock", freshness_days: int = 1,
+    *, asset_class: Side = "stock", freshness_days: int = 0,
 ) -> IngestStats:
-    """Fetch and upsert daily bars, skipping ranges that are already fresh."""
+    """Fetch and upsert daily bars, skipping ranges that are already fresh.
+
+    Fresh means a settled bar exists for ``end`` (minus ``freshness_days``).
+    On weekends/holidays that never holds, so the range is re-fetched - one
+    cheap call, and it is also what lets split detection see revisions.
+    """
     stats = IngestStats(symbol=symbol.upper())
     ticker = ensure_ticker(session, symbol)
 
     low, high, count = covered_range(session, ticker.id, start, end)
-    if high is not None and high >= end - dt.timedelta(days=freshness_days):
+    settled = latest_settled_date(session, ticker.id, end)
+    if settled is not None and settled >= end - dt.timedelta(days=freshness_days):
         log_fetch(
             session, provider=provider.name, endpoint=f"history({symbol})",
             ticker=symbol, status="skipped_fresh", row_count=count,
@@ -142,6 +169,16 @@ def ingest_history(
             )
         )
     }
+    split = detect_split(
+        {d: row.close for d, row in existing.items() if not row.provisional},
+        {bar.date: bar.close for bar in result.data if bar.close is not None},
+    )
+    if split is not None:
+        split_date, split_from, split_to = split
+        if apply_split(session, ticker.id, split_date, split_from, split_to,
+                       source=result.provider) is not None:
+            stats.note(f"split {split_to}:{split_from} detected effective {split_date}"
+                       " - older bars, positions and calls rescaled")
     for bar in result.data:
         # Provenance is taken from the result envelope, not the bar: a provider
         # that forgets to stamp ``Bar.source`` cannot mislabel stored rows.
@@ -157,21 +194,29 @@ def ingest_history(
 
 def _upsert_bar(
     session: Session, ticker_id: int, bar: Bar, existing: dict[dt.date, PriceHistory],
-    *, source: str | None = None,
+    *, source: str | None = None, provisional: bool = False,
 ) -> None:
     """Insert or update one bar; unique (ticker, date) makes this safe."""
     provenance = source or bar.source
     row = existing.get(bar.date)
     if row is None:
-        session.add(PriceHistory(
+        row = PriceHistory(
             ticker_id=ticker_id, date=bar.date, open=bar.open, high=bar.high,
             low=bar.low, close=bar.close, adj_close=bar.adj_close,
-            volume=bar.volume, source=provenance,
-        ))
+            volume=bar.volume, source=provenance, provisional=provisional,
+        )
+        session.add(row)
+        existing[bar.date] = row
         return
+    new = (bar.open, bar.high, bar.low, bar.close, bar.adj_close, bar.volume,
+           provenance, provisional)
+    old = (row.open, row.high, row.low, row.close, row.adj_close, row.volume,
+           row.source, row.provisional)
+    if new == old:
+        return  # unchanged: no UPDATE, fetched_at keeps meaning "last changed"
     row.open, row.high, row.low = bar.open, bar.high, bar.low
     row.close, row.adj_close, row.volume = bar.close, bar.adj_close, bar.volume
-    row.source = provenance
+    row.source, row.provisional = provenance, provisional
     row.fetched_at = dt.datetime.now(dt.timezone.utc)
 
 
@@ -256,10 +301,19 @@ def ingest_quote(
             )
         )
     }
+    settled = existing.get(today)
+    if settled is not None and not settled.provisional:
+        # The day's real bar already landed; a quote must not replace it
+        # (it would wipe OHLC and could pin an intraday price as the close).
+        log_fetch(session, provider=result.provider, endpoint=result.endpoint,
+                  ticker=symbol, status="skipped_fresh", row_count=0)
+        stats.note(f"settled bar for {today} already stored - quote not written")
+        return stats, quote
     # A quote carries no OHLC, so those columns stay NULL rather than being
     # back-filled with the close - the row's source says which provider priced it.
+    # It is provisional: the next history fetch replaces it with the real bar.
     bar = Bar(symbol=symbol.upper(), date=today, close=quote.price, source=result.provider)
-    _upsert_bar(session, ticker.id, bar, existing, source=result.provider)
+    _upsert_bar(session, ticker.id, bar, existing, source=result.provider, provisional=True)
     session.flush()
     stats.written = 1
     log_fetch(session, provider=result.provider, endpoint=result.endpoint, ticker=symbol,
@@ -388,6 +442,45 @@ def ingest_earnings(
     return stats
 
 
+def ingest_dividends(
+    session: Session, provider: MarketDataProvider, symbol: str, start: dt.date,
+    end: dt.date, *, asset_class: Side = "stock",
+) -> IngestStats:
+    """Upsert cash dividends by ex-date (amounts follow the provider's basis)."""
+    stats = IngestStats(symbol=symbol.upper())
+    result = provider.get_dividends(symbol, start, end, asset_class=asset_class)
+    if not result.ok:
+        log_fetch(session, provider=provider.name, endpoint=f"dividends({symbol})",
+                  ticker=symbol, status="error", error=result.error, row_count=0)
+        stats.note(f"dividends unavailable: {result.error}")
+        return stats
+
+    ticker = ensure_ticker(session, symbol)
+    existing = {
+        row.ex_date: row for row in session.scalars(
+            select(Dividend).where(Dividend.ticker_id == ticker.id,
+                                   Dividend.ex_date >= start, Dividend.ex_date <= end)
+        )
+    }
+    for event in result.data:
+        row = existing.get(event.ex_date)
+        if row is None:
+            session.add(Dividend(ticker_id=ticker.id, ex_date=event.ex_date,
+                                 amount=event.amount, source=result.provider))
+            stats.written += 1
+        elif row.amount != event.amount:
+            row.amount, row.source = event.amount, result.provider
+            row.fetched_at = dt.datetime.now(dt.timezone.utc)
+            stats.written += 1
+        else:
+            stats.skipped += 1
+    stats.fetched = result.row_count
+    session.flush()
+    log_fetch(session, provider=result.provider, endpoint=result.endpoint, ticker=symbol,
+              status="ok" if result.row_count else "empty", row_count=stats.written)
+    return stats
+
+
 def refresh_symbol(
     session: Session, provider: MarketDataProvider, symbol: str, *,
     start: dt.date | None = None, end: dt.date | None = None, asset_class: Side = "stock",
@@ -400,6 +493,9 @@ def refresh_symbol(
         "history": ingest_history(session, provider, symbol, start, end, asset_class=asset_class),
         "fundamentals": ingest_fundamentals(session, provider, symbol, asset_class=asset_class),
     }
+    if asset_class == "stock":  # indices pay nothing; don't spend a call on them
+        outcomes["dividends"] = ingest_dividends(session, provider, symbol, start, end,
+                                                 asset_class=asset_class)
     # A live quote guarantees today's price lands even when the provider's
     # daily bar for the current session is still half-formed (Yahoo publishes
     # a row with a NaN close intraday, which history ingestion drops).

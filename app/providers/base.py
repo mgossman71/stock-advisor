@@ -141,6 +141,20 @@ class EarningsEvent:
 
 
 @dataclass(frozen=True)
+class Dividend:
+    """A cash dividend per share, keyed by its ex-dividend date.
+
+    Amounts are as the provider serves them: split-adjusted to the current
+    share basis (``app/ingestion/splits.py`` keeps stored rows in step).
+    """
+
+    symbol: str
+    ex_date: dt.date
+    amount: Decimal
+    source: str = "unknown"
+
+
+@dataclass(frozen=True)
 class UniverseMember:
     """A symbol belonging to a screening universe (e.g. the S&P 500)."""
 
@@ -212,6 +226,13 @@ class MarketDataProvider(ABC):
     def get_earnings(self, symbol: str, *, asset_class: Side = "stock") -> ProviderResult:
         """Earnings dates + surprises.  Unsupported by default."""
         return ProviderResult(self.name, "earnings", ok=False, error="unsupported")
+
+    def get_dividends(
+        self, symbol: str, start: dt.date, end: dt.date, *, asset_class: Side = "stock"
+    ) -> ProviderResult:
+        """Cash dividends with ex-dates in ``[start, end]``.  ``ok=True`` with no
+        rows means "pays nothing in range".  Unsupported by default."""
+        return ProviderResult(self.name, "dividends", ok=False, error="unsupported")
 
     def get_universe(self, kind: str = "sp500") -> ProviderResult:
         """Constituent list for a screening universe.  Unsupported by default."""

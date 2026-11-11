@@ -21,10 +21,19 @@
       }
       return NaN;
     }
+    var asofOut = document.getElementById(form.getAttribute("data-asof") || "");
+    var session = form.getAttribute("data-session") || "";
     function update() {
       var q = parseFloat(qty && qty.value);
       var p = unitPrice();
       out.textContent = (q > 0 && p > 0) ? "$" + fmt(q * p) + "  (" + fmt(q) + " × " + fmt(p) + ")" : "—";
+      if (asofOut && symbol) {
+        // ISO dates compare correctly as strings.
+        var opt = symbol.selectedOptions[0];
+        var asof = opt && opt.getAttribute("data-asof");
+        asofOut.textContent = !asof ? "" : "Price as of " + asof +
+          (asof < session ? " (old — a live quote is fetched when you submit)." : ".");
+      }
     }
     [qty, price, symbol].forEach(function (el) {
       if (el) el.addEventListener("input", update);

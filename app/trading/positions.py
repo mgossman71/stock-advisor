@@ -3,12 +3,15 @@
 Formulas (mirrored by the docstrings in ``app/db/models_trading.py`` and
 unit-tested in ``tests/test_pnl_math.py``):
 
-* **Long add** reweights the average cost::
+* **Long add** reweights the average cost, buy commission included (so the
+  commission shows up in realised P&L, matching what left the cash balance)::
 
-      new_avg = (old_qty * old_avg + fill_qty * fill_price) / new_qty
+      new_avg = (old_qty * old_avg + fill_qty * fill_price + commission) / new_qty
 
 * **Shorts** keep a *negative* ``qty``; ``avg_cost`` is the price the shares
-  were sold into.
+  were sold into, net of the opening commission::
+
+      new_avg = (old_qty_abs * old_avg + fill_qty * fill_price - commission) / new_qty_abs
 
 * **Realised P&L closing a long**::
 
@@ -16,10 +19,11 @@ unit-tested in ``tests/test_pnl_math.py``):
 
 * **Realised P&L closing a short**::
 
-      (avg_cost - fill_price) * qty_closed - commission - borrow_cost
+      (avg_cost - fill_price) * qty_closed - commission
 
-  Borrow cost is charged at close (and while open) so a short that "wins" on
-  price but bleeds borrow is graded honestly.
+  Borrow is not part of this formula: the nightly accrual debits it from cash
+  and from ``realized_pnl`` day by day while the short is open
+  (``app.trading.orders.accrue_short_borrow``).
 
 * **Unrealised P&L** is ``None`` when no mark price is known.  It is never 0:
   0 would read as "flat" while an absent price really means "we don't know".
@@ -63,21 +67,21 @@ def apply_fill(
         if qty > 0:  # add to long: reweight average cost
             base = avg_cost if avg_cost is not None else ZERO
             new_qty = qty + fill.qty
-            new_avg = (qty * base + fill.qty * fill.price) / new_qty
+            new_avg = (qty * base + fill.qty * fill.price + fill.commission) / new_qty
             return new_qty, new_avg, ZERO, ZERO
         if qty < 0:
             raise ValueError("cannot buy into a short position - use cover")
-        return fill.qty, fill.price, ZERO, ZERO  # open long
+        return fill.qty, (fill.qty * fill.price + fill.commission) / fill.qty, ZERO, ZERO
 
     if fill.side == "short":
         if qty < 0:  # add to short: reweight entry price
             base = avg_cost if avg_cost is not None else ZERO
             new_qty = qty - fill.qty
-            new_avg = (-qty * base + fill.qty * fill.price) / -new_qty
+            new_avg = (-qty * base + fill.qty * fill.price - fill.commission) / -new_qty
             return new_qty, new_avg, ZERO, ZERO
         if qty > 0:
             raise ValueError("cannot short into a long position - use sell")
-        return -fill.qty, fill.price, ZERO, ZERO  # open short
+        return -fill.qty, (fill.qty * fill.price - fill.commission) / fill.qty, ZERO, ZERO
 
     if fill.side == "sell":
         if qty <= 0:
@@ -95,8 +99,8 @@ def apply_fill(
         if avg_cost is None:  # pragma: no cover - guarded at the DB layer
             raise ValueError("short position is missing avg_cost")
         closed = min(fill.qty, -qty)
-        # borrow_delta stays 0 here: accrual lives in the nightly job, and the
-        # position's running ``borrow_cost`` is subtracted when the short closes.
+        # borrow_delta stays 0 here: accrual lives in the nightly job, which
+        # has already taken it out of cash and realized_pnl day by day.
         realised = (avg_cost - fill.price) * closed - fill.commission
         new_qty = qty + closed
         return (new_qty, None if new_qty == 0 else avg_cost, realised, ZERO)

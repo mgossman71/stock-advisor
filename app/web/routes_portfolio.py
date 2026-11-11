@@ -6,19 +6,26 @@ import datetime as dt
 from decimal import Decimal, InvalidOperation
 
 from fastapi import APIRouter, Form, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 from sqlalchemy import select
 
 from app.config import get_settings
 from app.db.base import session_scope
-from app.db.models import CashAdjustment, Order, Position, Ticker
+from app.db.models import CashAdjustment, DividendPayment, Order, Position, Ticker
+from app.providers.registry import build_provider
 from app.trading.accounts import CashAdjustmentError, adjust_cash, get_or_open_account
-from app.trading.orders import execute_order, latest_price
+from app.trading.freshness import ensure_fresh_price, last_session_date
+from app.trading.orders import cancel_order, execute_order, latest_price
 from app.trading.sizing import suggested_size
 from app.trading.snapshots import mark_positions, portfolio_values, write_snapshot
 from app.web.common import DISCLAIMER, templates
 
 router = APIRouter()
+
+
+def order_provider(settings):
+    """Provider used to refresh a stale quote before a fill (tests override it)."""
+    return build_provider(settings)
 
 
 def _positions_context(session, account):
@@ -68,9 +75,18 @@ def portfolio_page(request: Request, prefill: int | None = None):
         symbols = session.scalars(select(Ticker.symbol).order_by(Ticker.symbol)).all()
         # Latest stored close per ticker: powers the live "est. trade cost"
         # readout on the order ticket (data-close on each <option>).
-        closes = {sym: (str(p[0]) if (p := latest_price(session, tid)) else "")
-                  for sym, tid in session.execute(
-                      select(Ticker.symbol, Ticker.id).order_by(Ticker.symbol))}
+        closes, closes_asof = {}, {}
+        for sym, tid in session.execute(select(Ticker.symbol, Ticker.id)
+                                        .order_by(Ticker.symbol)):
+            priced = latest_price(session, tid)
+            closes[sym] = str(priced[0]) if priced else ""
+            closes_asof[sym] = priced[1].isoformat() if priced else ""
+        dividends = session.scalars(
+            select(DividendPayment).where(DividendPayment.account_id == account.id)
+            .order_by(DividendPayment.booked_at.desc()).limit(25)
+        ).all()
+        for d in dividends:  # touch lazy relationships inside the session
+            _ = d.dividend.ticker.symbol
         adjustments = session.scalars(
             select(CashAdjustment).where(CashAdjustment.account_id == account.id)
             .order_by(CashAdjustment.created_at.desc()).limit(25)
@@ -81,6 +97,8 @@ def portfolio_page(request: Request, prefill: int | None = None):
                  "values": values, "orders": orders, "prefill": prefill_data,
                  "realized": realized, "symbols": symbols, "closes": closes,
                  "settings": settings, "adjustments": adjustments,
+                 "closes_asof": closes_asof, "dividends": dividends,
+                 "session_date": last_session_date().isoformat(),
                  "data_today": dt.date.today()},
     )
 
@@ -98,10 +116,15 @@ def place_order(
     settings = get_settings()
     with session_scope() as session:
         account = get_or_open_account(session, settings)
+        ticker = session.scalar(select(Ticker).where(Ticker.symbol == symbol.upper()))
+        fresh = (ensure_fresh_price(session, ticker, order_provider(settings))
+                 if ticker is not None else None)
         try:
             result = execute_order(
                 session, account, symbol, side, Decimal(qty),
                 settings=settings, note=note or None, recommendation_id=recommendation_id,
+                price_not_before=(fresh.required_since
+                                  if fresh is not None and fresh.stale_reason else None),
             )
         except ValueError as exc:  # bad qty/side at the arithmetic layer
             return templates.TemplateResponse(
@@ -118,6 +141,7 @@ def place_order(
         session.commit()
         message = (
             f"PAPER account: filled {side} {qty} {symbol.upper()} @ {result.order.fill_price}"
+            f" ({fresh.describe() if fresh else 'stored price'})"
             if result.accepted else f"Order {result.order.status}: {result.reason}"
         )
     return templates.TemplateResponse(
@@ -171,3 +195,15 @@ def adjust_cash_route(
                  "reason": None, "account": account, "positions": positions,
                  "values": values, "settings": settings},
     )
+
+
+@router.post("/portfolio/orders/{order_id}/cancel")
+def cancel_order_route(order_id: int):
+    """Withdraw a pending limit order (plain form post -> 303 back)."""
+    with session_scope() as session:
+        try:
+            cancel_order(session, order_id)
+        except ValueError:
+            pass  # already filled/cancelled: the refreshed page shows its real status
+        session.commit()
+    return RedirectResponse("/portfolio", status_code=303)

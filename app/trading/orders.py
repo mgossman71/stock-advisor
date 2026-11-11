@@ -11,6 +11,10 @@ The fill model:
 * Cash legs: buy/cover debit ``qty*fill + commission``; sell/short credit
   ``qty*fill - commission``.  A buy or cover that would overdraw cash is
   rejected.
+* Shorts must satisfy initial margin: equity >= ``SHORT_MARGIN_PCT`` % of
+  total short market value after the trade.
+* Limit orders that cannot fill stay ``pending`` and are retried nightly by
+  ``process_pending_orders``; ``cancel_order`` withdraws one.
 * Sides are strict: ``buy`` only opens/adds longs, ``sell`` only closes them,
   ``short`` only opens/adds shorts, ``cover`` only closes them.  This keeps the
   P&L attribution in ``apply_fill`` unambiguous.
@@ -92,12 +96,19 @@ def execute_order(
     note: str | None = None,
     recommendation_id: int | None = None,
     limit_price: Decimal | None = None,
+    price_not_before: dt.date | None = None,
 ) -> ExecutionResult:
     """Execute a paper order end to end; returns the order row + verdict.
 
+    ``price_not_before`` rejects the order when the newest stored price is
+    older than that date - callers set it after a failed live-quote refresh
+    (``app.trading.freshness.ensure_fresh_price``) so an order never fills at
+    a stale close.  This module itself never touches the network.
+
     Rejections (bad side, unknown price, insufficient cash, closing more than
-    is open) still persist the order with ``status='rejected'`` and a reason,
-    so the trade history shows the attempt.
+    is open, short margin) still persist the order with ``status='rejected'``
+    and a reason, so the trade history shows the attempt.  A limit that cannot
+    fill yet stays ``pending`` and is retried by :func:`process_pending_orders`.
     """
     settings = settings or get_settings()
     qty = Decimal(qty)
@@ -107,7 +118,6 @@ def execute_order(
         raise ValueError("qty must be positive")
 
     ticker = session.scalar(select(Ticker).where(Ticker.symbol == symbol.upper()))
-    priced = latest_price(session, ticker.id) if ticker else None
 
     order = Order(
         account_id=account.id,
@@ -127,13 +137,58 @@ def execute_order(
         order.status, order.reject_reason = "rejected", f"unknown ticker {symbol!r}"
         return ExecutionResult(order=order, accepted=False, reason=order.reject_reason)
 
+    return _attempt_fill(session, account, order, settings,
+                         price_not_before=price_not_before)
+
+
+def _reject(session: Session, order: Order, reason: str) -> ExecutionResult:
+    order.status, order.reject_reason = "rejected", reason
+    session.add(order)
+    session.flush()
+    return ExecutionResult(order=order, accepted=False, reason=reason)
+
+
+def _short_margin_shortfall(
+    session: Session, account: Account, ticker_id: int, add_qty: Decimal,
+    fill_price: Decimal, commission: Decimal, settings: Settings,
+) -> tuple[Decimal, Decimal] | None:
+    """``(required, equity)`` when the short would breach initial margin, else None.
+
+    Reg-T style: after the short, account equity must be at least
+    ``short_margin_pct`` % of total short market value.  Positions without a
+    mark are valued at nothing - they cannot lend support to new shorts.
+    """
+    from app.trading.snapshots import portfolio_values  # avoid an import cycle
+
+    values = portfolio_values(session, account)
+    # Selling short credits cash and books an equal negative position, so the
+    # trade itself moves equity only by its commission.
+    equity = values["total_value"] - commission
+    exposure = values["short_exposure"] + add_qty * fill_price
+    required = exposure * Decimal(settings.short_margin_pct) / Decimal("100")
+    if equity < required:
+        return required, equity
+    return None
+
+
+def _attempt_fill(
+    session: Session, account: Account, order: Order, settings: Settings,
+    *, price_not_before: dt.date | None = None,
+) -> ExecutionResult:
+    """Price and (if every rule passes) fill one pending order in place."""
+    side, qty, limit_price = order.side, order.qty, order.limit_price
+    priced = latest_price(session, order.ticker_id)
     if priced is None:
-        order.status, order.reject_reason = "rejected", "no stored price - cannot fill"
-        session.add(order)
-        session.flush()
-        return ExecutionResult(order=order, accepted=False, reason=order.reject_reason)
+        return _reject(session, order, "no stored price - cannot fill")
 
     reference, as_of = priced
+    if price_not_before is not None and as_of < price_not_before:
+        age = (price_not_before - as_of).days
+        return _reject(session, order, (
+            f"stale price: last price is from {as_of}, {age} day"
+            f"{'s' if age != 1 else ''} before the {price_not_before} session, and no "
+            f"live quote was available - refresh data and retry"
+        ))
     fill_price, commission, slippage_cost = compute_fill_inputs(reference, qty, side, settings)
 
     # Limit discipline: a buy/cover fills only at or below the limit, a
@@ -158,7 +213,7 @@ def execute_order(
 
     position = session.scalar(
         select(Position).where(
-            Position.account_id == account.id, Position.ticker_id == ticker.id
+            Position.account_id == account.id, Position.ticker_id == order.ticker_id
         )
     )
     pos_qty = position.qty if position else ZERO
@@ -166,38 +221,41 @@ def execute_order(
     # Cash discipline for debit sides.
     debit = qty * fill_price + commission
     if side in ("buy", "cover") and account.cash_balance - debit < ZERO:
-        order.status, order.reject_reason = "rejected", (
+        return _reject(session, order, (
             f"insufficient cash: need {debit:.2f}, have {account.cash_balance:.2f}"
-        )
-        session.add(order)
-        session.flush()
-        return ExecutionResult(order=order, accepted=False, reason=order.reject_reason)
+        ))
 
     # Closing sides cannot exceed the open position.
     if side == "sell" and (pos_qty <= 0 or qty > pos_qty):
-        order.status, order.reject_reason = "rejected", (
-            f"cannot sell {qty} with {pos_qty} open long"
-        )
-        session.add(order)
-        session.flush()
-        return ExecutionResult(order=order, accepted=False, reason=order.reject_reason)
+        return _reject(session, order, f"cannot sell {qty} with {pos_qty} open long")
     if side == "cover" and (pos_qty >= 0 or qty > -pos_qty):
-        order.status, order.reject_reason = "rejected", (
-            f"cannot cover {qty} with {-pos_qty} open short"
-        )
-        session.add(order)
-        session.flush()
-        return ExecutionResult(order=order, accepted=False, reason=order.reject_reason)
+        return _reject(session, order, f"cannot cover {qty} with {-pos_qty} open short")
+    if side == "buy" and pos_qty < 0:
+        return _reject(session, order, f"cannot buy into a {-pos_qty} share short - cover first")
+    if side == "short" and pos_qty > 0:
+        return _reject(session, order, f"cannot short into a {pos_qty} share long - sell first")
+
+    if side == "short":
+        shortfall = _short_margin_shortfall(session, account, order.ticker_id, qty,
+                                            fill_price, commission, settings)
+        if shortfall is not None:
+            required, equity = shortfall
+            return _reject(session, order, (
+                f"insufficient margin: shorts need equity of {required:.2f} "
+                f"({settings.short_margin_pct}% of short value), have {equity:.2f}"
+            ))
 
     # Apply the fill to the position.
     if position is None:
-        position = Position(account_id=account.id, ticker_id=ticker.id, qty=ZERO)
+        position = Position(account_id=account.id, ticker_id=order.ticker_id, qty=ZERO)
         session.add(position)
         session.flush()
     new_qty, new_avg, realised, _ = apply_fill(
         pos_qty, position.avg_cost,
         Fill(side=side, qty=qty, price=fill_price, commission=commission),
     )
+    if pos_qty == 0:
+        position.opened_at = as_of  # a fresh position (possibly a re-open)
     position.qty = new_qty
     position.avg_cost = new_avg
     position.realized_pnl = position.realized_pnl + realised
@@ -205,8 +263,6 @@ def execute_order(
     position.last_price_at = dt.datetime(
         as_of.year, as_of.month, as_of.day, tzinfo=dt.timezone.utc
     )
-    if position.opened_at is None:
-        position.opened_at = as_of
 
     # Cash leg.
     if side in ("buy", "cover"):
@@ -222,14 +278,48 @@ def execute_order(
     return ExecutionResult(order=order, accepted=True)
 
 
+def process_pending_orders(
+    session: Session, account: Account, *, settings: Settings | None = None,
+) -> dict[str, int]:
+    """Retry every pending limit order against the latest stored price.
+
+    Limits are good-till-cancelled: each nightly pass either fills them, keeps
+    them pending, or rejects them if a rule (cash, margin, position) now fails.
+    """
+    settings = settings or get_settings()
+    counts = {"filled": 0, "pending": 0, "rejected": 0}
+    pending = session.scalars(
+        select(Order).where(Order.account_id == account.id, Order.status == "pending")
+        .order_by(Order.submitted_at, Order.id)
+    ).all()
+    for order in pending:
+        result = _attempt_fill(session, account, order, settings)
+        counts[result.order.status] = counts.get(result.order.status, 0) + 1
+    return counts
+
+
+def cancel_order(session: Session, order_id: int) -> Order:
+    """Cancel a pending order (filled/rejected history is immutable)."""
+    order = session.get(Order, order_id)
+    if order is None:
+        raise ValueError(f"no order #{order_id}")
+    if order.status != "pending":
+        raise ValueError(f"order #{order_id} is {order.status}, only pending orders cancel")
+    order.status = "cancelled"
+    session.flush()
+    return order
+
+
 def accrue_short_borrow(
     session: Session, account: Account, today: dt.date, *, settings: Settings | None = None
 ) -> Decimal:
     """Charge one day of borrow cost on every open short.
 
-    Cost = ``short_market_value * short_borrow_apy / 365``.  Skipped (never
-    fabricated) when the short has no mark price.  Idempotent per day is the
-    caller's job - the nightly wrapper only runs this once per calendar date.
+    Cost = ``short_market_value * short_borrow_apy / 365``, debited from cash
+    (so equity reflects it) and from the position's ``realized_pnl``.  Skipped
+    (never fabricated) when the short has no mark price.  Idempotent per day
+    is the caller's job - the nightly wrapper only runs this once per calendar
+    date.
     """
     settings = settings or get_settings()
     apy = Decimal(settings.short_borrow_apy)
@@ -244,6 +334,7 @@ def accrue_short_borrow(
         position.borrow_cost = position.borrow_cost + cost
         position.realized_pnl = position.realized_pnl - cost
         total += cost
+    account.cash_balance = account.cash_balance - total
     session.flush()
     return total
 

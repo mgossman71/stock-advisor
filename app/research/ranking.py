@@ -14,11 +14,12 @@ import datetime as dt
 from dataclasses import dataclass
 from decimal import Decimal
 
-from sqlalchemy import case, func, select
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.config import Settings
-from app.db.models import Account, Position, RealTrade, Recommendation
+from app.db.models import Account, Position, Recommendation
+from app.tracking.lots import open_lots
 from app.trading.orders import latest_price
 from app.trading.sizing import suggested_size
 from app.trading.snapshots import portfolio_values
@@ -46,16 +47,9 @@ def _held_map(session: Session) -> dict[int, str]:
         select(Position.ticker_id).where(Position.qty != 0).distinct()
     ):
         held[tid] = "paper"
-    net = session.execute(
-        select(
-            RealTrade.ticker_id,
-            func.sum(case((RealTrade.side == "buy", RealTrade.qty),
-                          else_=-RealTrade.qty)),
-        ).group_by(RealTrade.ticker_id)
-    ).all()
-    for tid, qty in net:
-        if qty is not None and qty != 0:
-            held[tid] = "real"  # a real position outranks the paper tag
+    # Open FIFO lots, not a raw buy-minus-sell sum: lots are split-adjusted.
+    for lot in open_lots(session):
+        held[lot.trade.ticker_id] = "real"  # a real position outranks the paper tag
     return held
 
 

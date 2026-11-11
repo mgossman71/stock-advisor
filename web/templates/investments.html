@@ -23,7 +23,7 @@
       <div class="kpi">{{ summary.market_value|money }}<small>market value</small></div>
       <div class="kpi {{ 'pos' if summary.unrealized > 0 else 'neg' if summary.unrealized < 0 }}">{{ summary.unrealized|money }}<small>unrealized G/L</small></div>
       <div class="kpi">{{ summary.est_tax_if_sold_today|money }}<small>est. tax if sold today</small></div>
-      <div class="kpi">{{ summary.est_tax_realized|money }}<small>est. tax on realized</small></div>
+      <div class="kpi">{{ summary.est_tax_realized|money }}<small>est. tax on {{ summary.tax_year }} realized</small></div>
     </div>
     {% if summary.unrealized_unmarked > 0 %}
     <p class="muted">{{ summary.unrealized_unmarked|money }} of cost sits in unpriced
@@ -97,19 +97,25 @@
 </div>
 
 <div class="panel" style="margin-top:1rem">
-  <h2>Realized so far <span class="muted">FIFO matches, classified at sale date</span></h2>
+  <h2>Realized in {{ summary.tax_year }} <span class="muted">FIFO matches, classified at sale date</span></h2>
   <table>
     <tr><th></th><th class="num">Gains</th><th class="num">Losses</th></tr>
-    <tr><td>Short-term (≤365d)</td>
+    <tr><td>Short-term (held ≤ 1 year)</td>
         <td class="num pos">{{ summary.st_gain_real|money }}</td>
         <td class="num neg">{{ summary.st_loss_real|money }}</td></tr>
-    <tr><td>Long-term (&gt;365d)</td>
+    <tr><td>Long-term (held &gt; 1 year)</td>
         <td class="num pos">{{ summary.lt_gain_real|money }}</td>
         <td class="num neg">{{ summary.lt_loss_real|money }}</td></tr>
   </table>
   <p>Estimated tax on realized:
     <b>{{ summary.est_tax_realized|money }}</b>
-    <span class="muted">(ST {{ rates.short * 100 }}% / LT {{ rates.long * 100 }}%)</span></p>
+    <span class="muted">(ST {{ rates.short * 100 }}% / LT {{ rates.long * 100 }}%, after
+      netting short- against long-term)</span></p>
+  {% if summary.net_capital_loss_realized > 0 %}
+  <p class="muted">Net capital loss of {{ summary.net_capital_loss_realized|money }}: no tax
+    owed; up to {{ summary.loss_deduction_limit|money }} offsets ordinary income this year
+    and the rest carries forward.</p>
+  {% endif %}
 </div>
 
 <div class="panel" style="margin-top:1rem">

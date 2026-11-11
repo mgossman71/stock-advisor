@@ -28,12 +28,13 @@
     <div id="adjust-result"></div>
   </div>
   <div class="panel">
-    <h2>Order ticket <span class="muted">simulated fills at latest close ± slippage</span></h2>
+    <h2>Order ticket <span class="muted">simulated fills at the latest session's price ± slippage</span></h2>
     <form hx-post="/portfolio/order" hx-target="#order-result" hx-swap="innerHTML" class="inline"
-          data-cost="paper-cost">
+          data-cost="paper-cost" data-asof="paper-asof" data-session="{{ session_date }}">
       <select name="symbol" required>
         {% for s in symbols %}
         <option value="{{ s }}" data-close="{{ closes.get(s, '') }}"
+                data-asof="{{ closes_asof.get(s, '') }}"
                 {{ 'selected' if prefill and prefill.symbol == s }}>{{ s }}</option>
         {% endfor %}
       </select>
@@ -49,7 +50,8 @@
     </form>
     <p class="muted" style="margin:.4rem 0 0">Est. trade cost:
       <span class="cost-estimate" id="paper-cost">{% if prefill and closes.get(prefill.symbol) %}${{ (prefill.qty * (closes[prefill.symbol]|float))|money }}{% else %}—{% endif %}</span>
-      <span class="muted">qty × latest close; the real fill adds slippage + commission.</span></p>
+      <span class="muted">qty × latest close; the real fill adds slippage + commission.</span>
+      <span class="muted" id="paper-asof">{% set a = closes_asof.get(prefill.symbol, '') if prefill else '' %}{% if a %}Price as of {{ a }}{% if a < session_date %} (old — a live quote is fetched when you submit){% endif %}.{% endif %}</span></p>
     <div id="order-result"></div>
   </div>
 </div>
@@ -90,6 +92,25 @@
 {% endif %}
 
 <div class="panel" style="margin-top:1rem">
+  <h2>Dividends <span class="muted">booked on the ex-date: longs are paid, shorts pay</span></h2>
+  <table>
+    <tr><th>Ex-date</th><th>Ticker</th><th class="num">Shares</th><th class="num">Per share</th>
+        <th class="num">Cash</th></tr>
+    {% for d in dividends %}
+    <tr>
+      <td class="muted">{{ d.dividend.ex_date }}</td>
+      <td>{{ d.dividend.ticker.symbol }}</td>
+      <td class="num">{{ d.qty }}</td>
+      <td class="num">{{ d.dividend.amount|price }}</td>
+      <td class="num {{ 'pos' if d.total > 0 else 'neg' }}">{{ d.total|money }}</td>
+    </tr>
+    {% else %}
+    <tr><td colspan="5" class="muted">No dividends booked yet.</td></tr>
+    {% endfor %}
+  </table>
+</div>
+
+<div class="panel" style="margin-top:1rem">
   <h2>Cash adjustments <span class="muted">deposits/withdrawals - not trading performance</span></h2>
   <table>
     <tr><th>When</th><th class="num">Amount</th><th>Note</th></tr>
@@ -119,7 +140,11 @@
       <td class="num">{{ o.fill_price|price if o.fill_price is not none else "—" }}</td>
       <td class="num">{{ o.commission|money if o.commission is not none else "—" }}</td>
       <td class="{{ 'flash-ok' if o.status == 'filled' else 'flash-bad' }}">{{ o.status }}
-        {% if o.reject_reason %}<span class="muted">({{ o.reject_reason }})</span>{% endif %}</td>
+        {% if o.reject_reason %}<span class="muted">({{ o.reject_reason }})</span>{% endif %}
+        {% if o.status == 'pending' %}
+        <form method="post" action="/portfolio/orders/{{ o.id }}/cancel" style="display:inline">
+          <button type="submit">cancel</button></form>
+        {% endif %}</td>
       <td class="muted">{{ o.note or "" }}</td>
     </tr>
     {% endfor %}

@@ -60,11 +60,16 @@ class Settings(BaseSettings):
     min_commission: Decimal = Decimal("0.00")
     slippage_bps: Decimal = Decimal("5")
     short_borrow_apy: Decimal = Decimal("0.03")
+    #: Reg-T style initial margin on shorts: equity must be at least this % of
+    #: total short market value after a new short fills.
+    short_margin_pct: Decimal = Decimal("50")
     risk_per_trade_pct: Decimal = Decimal("1.0")
 
     # --- scheduling / alerts ----------------------------------------------
     scheduler_enabled: bool = True
-    nightly_cron: str = "15 21 * * *"  # hour minute dom month dow (local time)
+    #: "minute hour dom month dow", evaluated in UTC (21:15 UTC = 16:15 EST /
+    #: 17:15 EDT, i.e. after the US close all year).
+    nightly_cron: str = "15 21 * * *"
     alert_default_drawdown_pct: Decimal = Decimal("10")
     alert_default_earnings_within_days: int = 14
 

@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import datetime as dt
 from decimal import Decimal, InvalidOperation
+from urllib.parse import urlencode
 
 from fastapi import APIRouter, Form, Request
 from fastapi.responses import RedirectResponse
@@ -19,6 +20,11 @@ from app.trading.orders import latest_price
 from app.web.common import DISCLAIMER, templates
 
 router = APIRouter()
+
+
+def _back(**params: str) -> RedirectResponse:
+    """303 to the page with a flash/err message, safely query-encoded."""
+    return RedirectResponse(f"/investments?{urlencode(params)}", status_code=303)
 
 
 @router.get("/investments")
@@ -91,8 +97,8 @@ def record_real_trade(
             flash = (f"recorded {trade.side} {trade.qty} {trade.ticker.symbol} "
                      f"@ {trade.price} on {trade.trade_date}")
     except (RealTradeError, InvalidOperation, ValueError) as exc:
-        return RedirectResponse(f"/investments?err={exc}", status_code=303)
-    return RedirectResponse(f"/investments?flash={flash}", status_code=303)
+        return _back(err=str(exc))
+    return _back(flash=flash)
 
 
 @router.post("/investments/rates")
@@ -105,5 +111,5 @@ def save_rates(short_term_pct: str = Form(...), long_term_pct: str = Form(...)):
                           Decimal(long_term_pct) / 100)
             session.commit()
     except (TaxRateError, InvalidOperation) as exc:
-        return RedirectResponse(f"/investments?err={exc}", status_code=303)
-    return RedirectResponse("/investments?flash=tax rates updated", status_code=303)
+        return _back(err=str(exc))
+    return _back(flash="tax rates updated")

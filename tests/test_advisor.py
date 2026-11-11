@@ -124,3 +124,27 @@ def test_neutral_zone_emits_nothing(session, advisor):
     report = advisor.research(session, "FLAT")
     assert report.overall_stance == "neutral", (report.summary, report.score)
     assert advisor.recommendations_for(session, report) == []
+
+
+def test_overextended_short_fires_on_net_downgrades_and_rich_price(advisor):
+    """Regression: the rule parsed the wrong string and could never fire."""
+    payload = {"indicators": {"analyst_upgrades_90d": 0, "analyst_downgrades_90d": 3,
+                              "target_upside_pct": "-14.5"}}
+    assert advisor._overextended(payload) == D("-14.50")
+    # One net downgrade short of the threshold -> no setup.
+    payload["indicators"]["analyst_upgrades_90d"] = 2
+    assert advisor._overextended(payload) is None
+    # Price within 10 % of target -> no setup.
+    assert advisor._overextended({"indicators": {
+        "analyst_upgrades_90d": 0, "analyst_downgrades_90d": 5,
+        "target_upside_pct": "-5"}}) is None
+
+
+def test_overextended_short_reads_reports_saved_before_the_indicator_keys(advisor):
+    from app.research.scoring import sentiment_score
+
+    ss = sentiment_score(upgrades=0, downgrades=5, target_upside_pct=D("-25"),
+                         news_avg_sentiment=None)
+    legacy = {"sub_scores": [ss.as_dict()],
+              "evidence": [c.evidence.as_dict() for c in ss.components if c.evidence]}
+    assert advisor._overextended(legacy) == D("-25.00")

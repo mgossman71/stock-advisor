@@ -1,11 +1,22 @@
 """Holding-period classification and estimated tax liability.
 
 Rates live in ``app_settings`` as fractions (``0.32`` = 32%):
-``tax_rate_short_term`` (ordinary income rate applied to <=365-day gains) and
-``tax_rate_long_term``.  Unrealized figures answer "if I sold *today*";
-realized figures classify each FIFO match by the holding period at sale.
-Losses reduce the estimate (assumes no other capital gains/losses offset).
-Estimates only - not tax advice; wash sales are out of scope for v1.
+``tax_rate_short_term`` (ordinary income rate, held one year or less) and
+``tax_rate_long_term``.
+
+* **Holding period** follows the IRS rule: long-term only when sold *after*
+  the one-year anniversary of the purchase (calendar, so leap years count).
+* **Netting** follows Schedule D: short-term and long-term are netted within
+  their bucket, then a net loss in one bucket offsets a net gain in the other
+  (taxed at the surviving bucket's rate).  A net capital loss owes nothing;
+  up to ``LOSS_DEDUCTION_LIMIT`` of it offsets ordinary income and the rest
+  carries forward - surfaced, not folded into a negative "tax".
+* **Realized** figures cover sells in the *current tax year* only (gains from
+  earlier years were already filed).  "If sold today" is the *extra* tax that
+  liquidating every open lot would add on top of this year's realized result.
+
+Estimates only - not tax advice; wash sales and carryforwards from earlier
+years are out of scope for v1.
 """
 
 from __future__ import annotations
@@ -21,8 +32,8 @@ from app.tracking.lots import holdings, open_lots, realized_matches
 
 ZERO = Decimal("0")
 
-#: <= 365 days held = short term; > 365 = long term (calendar days, UTC-agnostic).
-LONG_TERM_MIN_DAYS = 366
+#: Net capital loss usable against ordinary income per year (USD, single/joint).
+LOSS_DEDUCTION_LIMIT = Decimal("3000")
 
 RATE_KEYS = {"short": "tax_rate_short_term", "long": "tax_rate_long_term"}
 DEFAULT_RATES = {"short": Decimal("0.32"), "long": Decimal("0.15")}
@@ -32,8 +43,36 @@ class TaxRateError(ValueError):
     """Rejected rate input (not a number, or outside 0..60%)."""
 
 
-def holding_class(held_days: int) -> str:
-    return "long" if held_days >= LONG_TERM_MIN_DAYS else "short"
+def _anniversary(bought: dt.date) -> dt.date:
+    try:
+        return bought.replace(year=bought.year + 1)
+    except ValueError:  # bought Feb 29: the anniversary is Feb 28
+        return dt.date(bought.year + 1, 2, 28)
+
+
+def holding_class(bought: dt.date, sold: dt.date) -> str:
+    """``long`` only when sold strictly after the purchase's one-year anniversary."""
+    return "long" if sold > _anniversary(bought) else "short"
+
+
+def net_capital_tax(st_net: Decimal, lt_net: Decimal,
+                    rates: dict[str, Decimal]) -> tuple[Decimal, Decimal]:
+    """Schedule-D style netting -> ``(tax, net_capital_loss)``.
+
+    ``st_net``/``lt_net`` are signed bucket nets.  ``tax`` is never negative;
+    ``net_capital_loss`` is the (positive) loss left after netting, if any.
+    """
+    if st_net >= 0 and lt_net >= 0:
+        return st_net * rates["short"] + lt_net * rates["long"], ZERO
+    if st_net < 0 and lt_net < 0:
+        return ZERO, -(st_net + lt_net)
+    total = st_net + lt_net
+    if total <= 0:
+        return ZERO, -total
+    # One bucket's loss is absorbed by the other's gain; the remainder keeps
+    # the rate of the bucket that had the gain.
+    rate = rates["short"] if st_net > 0 else rates["long"]
+    return total * rate, ZERO
 
 
 def get_tax_rates(session: Session) -> dict[str, Decimal]:
@@ -86,7 +125,7 @@ def lot_valuations(session: Session, as_of: dt.date) -> list[LotValuation]:
     for lot in open_lots(session):
         trade = lot.trade
         held = (as_of - trade.trade_date).days
-        klass = holding_class(held)
+        klass = holding_class(trade.trade_date, as_of)
         basis = lot.remaining * lot.cost_per_share
         priced = latest_price(session, trade.ticker_id)
         if priced is None:
@@ -105,7 +144,7 @@ def lot_valuations(session: Session, as_of: dt.date) -> list[LotValuation]:
 
 
 def tax_summary(session: Session, as_of: dt.date) -> dict[str, object]:
-    """Bucket totals for the page: unrealized (if sold today) + realized so far."""
+    """Bucket totals for the page: unrealized (if sold today) + realized this tax year."""
     rates = get_tax_rates(session)
     buckets = {k: ZERO for k in
                ("st_gain_unreal", "lt_gain_unreal", "st_loss_unreal", "lt_loss_unreal",
@@ -119,17 +158,23 @@ def tax_summary(session: Session, as_of: dt.date) -> dict[str, object]:
         buckets[key] += abs(v.unrealized)
 
     for m in realized_matches(session):
-        key = ("st" if holding_class(m.held_days) == "short" else "lt") + \
-              ("_gain_real" if m.gross_gain > 0 else "_loss_real")
+        if m.sell.trade_date.year != as_of.year:
+            continue  # an earlier tax year: already filed
+        if m.sell.trade_date > as_of:
+            continue
+        key = ("st" if holding_class(m.buy.trade_date, m.sell.trade_date) == "short"
+               else "lt") + ("_gain_real" if m.gross_gain > 0 else "_loss_real")
         buckets[key] += abs(m.gross_gain)
 
     def money(x: Decimal) -> Decimal:
         return x.quantize(Decimal("0.01"))
 
-    unreal_tax = (buckets["st_gain_unreal"] - buckets["st_loss_unreal"]) * rates["short"] + \
-                 (buckets["lt_gain_unreal"] - buckets["lt_loss_unreal"]) * rates["long"]
-    real_tax = (buckets["st_gain_real"] - buckets["st_loss_real"]) * rates["short"] + \
-               (buckets["lt_gain_real"] - buckets["lt_loss_real"]) * rates["long"]
+    st_real = buckets["st_gain_real"] - buckets["st_loss_real"]
+    lt_real = buckets["lt_gain_real"] - buckets["lt_loss_real"]
+    st_unreal = buckets["st_gain_unreal"] - buckets["st_loss_unreal"]
+    lt_unreal = buckets["lt_gain_unreal"] - buckets["lt_loss_unreal"]
+    real_tax, real_loss = net_capital_tax(st_real, lt_real, rates)
+    all_tax, all_loss = net_capital_tax(st_real + st_unreal, lt_real + lt_unreal, rates)
 
     marked = holdings(session)
     return {
@@ -141,6 +186,10 @@ def tax_summary(session: Session, as_of: dt.date) -> dict[str, object]:
         "unrealized_unmarked": sum(
             (h["cost_basis"] for h in marked if h["unrealized"] is None), ZERO),
         "rates": rates,
-        "est_tax_if_sold_today": money(unreal_tax),
+        "tax_year": as_of.year,
+        # Marginal: what selling everything today adds to this year's bill.
+        "est_tax_if_sold_today": money(max(ZERO, all_tax - real_tax)),
         "est_tax_realized": money(real_tax),
+        "net_capital_loss_realized": money(real_loss),
+        "loss_deduction_limit": LOSS_DEDUCTION_LIMIT,
     }

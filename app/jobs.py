@@ -1,14 +1,16 @@
 """Background work: the nightly pipeline and its manual trigger.
 
-One pass = fetch what matters -> score/screen -> grade outcomes -> accrue
-borrow -> mark positions -> snapshot the day -> evaluate alerts.
+One pass = fetch what matters -> accrue borrow -> book dividends -> retry
+pending limit orders -> mark positions -> snapshot the day -> score/screen -> grade
+outcomes -> evaluate alerts.
 
 Idempotency is the contract (acceptance criterion #4): ``POST /jobs/refresh``
 twice in a row must be safe.  It is, because ingestion upserts on
 (ticker, date), screening keeps one open call per (ticker, direction),
 grading rewrites the same outcome fields, and snapshots merge per date.
 Borrow accrual is the only *additive* step, and it is gated per calendar day
-via the fetch-log so a double trigger cannot double-charge.
+via the fetch-log so a double trigger cannot double-charge.  Dividends are
+additive too, but each (account, dividend) books once by unique index.
 """
 
 from __future__ import annotations
@@ -29,7 +31,9 @@ from app.providers.base import MarketDataProvider
 from app.research.outcomes import grade_recommendation, update_statuses
 from app.research.screener import screen_universe
 from app.trading.accounts import get_or_open_account
-from app.trading.orders import accrue_short_borrow
+from app.tracking.lots import open_lots
+from app.trading.dividends import book_dividends
+from app.trading.orders import accrue_short_borrow, process_pending_orders
 from app.trading.snapshots import mark_positions, write_snapshot
 
 D = Decimal
@@ -46,6 +50,8 @@ class JobReport:
     graded: int = 0
     statuses: dict[str, int] = field(default_factory=dict)
     borrow_charged: Decimal = D("0")
+    dividends_booked: Decimal = D("0")
+    orders: dict[str, int] = field(default_factory=dict)
     snapshot_date: str | None = None
     alerts_triggered: int = 0
     notes: list[str] = field(default_factory=list)
@@ -56,6 +62,8 @@ class JobReport:
             "scored": self.scored, "new_recommendations": self.new_recommendations,
             "graded": self.graded, "statuses": self.statuses,
             "borrow_charged": str(self.borrow_charged),
+            "dividends_booked": str(self.dividends_booked),
+            "orders": self.orders,
             "snapshot_date": self.snapshot_date,
             "alerts_triggered": self.alerts_triggered, "notes": self.notes,
         }
@@ -63,20 +71,20 @@ class JobReport:
 
 def target_symbols(session: Session, settings: Settings) -> list[str]:
     """Everything the nightly job must keep fresh: universe + watchlist +
-    open positions + open recommendations + benchmark + VIX."""
+    open paper positions + real-ledger holdings + open recommendations +
+    benchmark + VIX."""
+    from app.db.models import Position
+
     symbols: set[str] = set()
     symbols.update(session.scalars(
         select(Ticker.symbol).where((Ticker.in_universe.is_(True))
                                     | (Ticker.in_watchlist.is_(True)))
     ))
-    from app.db.models import Position
-
-    account = session.scalar(select(Position.ticker_id).limit(1))
-    if account is not None:
-        symbols.update(session.scalars(
-            select(Ticker.symbol).join(Position, Position.ticker_id == Ticker.id)
-            .where(Position.qty != 0)
-        ))
+    symbols.update(session.scalars(
+        select(Ticker.symbol).join(Position, Position.ticker_id == Ticker.id)
+        .where(Position.qty != 0)
+    ))
+    symbols.update(lot.trade.ticker.symbol for lot in open_lots(session))
     symbols.update(session.scalars(
         select(Ticker.symbol).join(Recommendation, Recommendation.ticker_id == Ticker.id)
         .where(Recommendation.status == "open")
@@ -112,9 +120,11 @@ def run_nightly(
     for symbol in symbols:
         asset = "index" if symbol in (settings.benchmark_symbol, settings.vix_symbol) else "stock"
         try:
-            refresh_symbol(session, provider, symbol, with_alternatives=with_alternatives,
-                           asset_class=asset)
+            outcomes = refresh_symbol(session, provider, symbol,
+                                      with_alternatives=with_alternatives, asset_class=asset)
             report.fetched.append(symbol)
+            report.notes.extend(f"{symbol}: {n}" for n in outcomes["history"].notes
+                                if n.startswith("split "))
         except Exception as exc:  # provider chain already retries; keep the job alive
             report.fetch_errors.append(f"{symbol}: {exc}")
         session.commit()
@@ -134,7 +144,13 @@ def run_nightly(
     else:
         report.notes.append("borrow already accrued today - skipped")
 
-    # 3. mark + snapshot
+    # 2b. dividends whose ex-date has arrived (idempotent per account+dividend)
+    report.dividends_booked = book_dividends(session, account, today)
+    session.commit()
+
+    # 3. pending limits, then mark + snapshot (so today's fills are in it)
+    report.orders = process_pending_orders(session, account, settings=settings)
+    session.commit()
     mark_positions(session, account)
     snapshot = write_snapshot(session, account, today, benchmark_symbol=settings.benchmark_symbol)
     report.snapshot_date = snapshot.snapshot_date.isoformat()

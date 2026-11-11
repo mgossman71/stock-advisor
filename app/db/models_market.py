@@ -84,6 +84,12 @@ class PriceHistory(Base):
     close: Mapped[Decimal] = mapped_column(PRICE, nullable=False)
     adj_close: Mapped[Decimal | None] = mapped_column(PRICE)
     volume: Mapped[int | None] = mapped_column(BigInteger)
+    #: True when the row was priced from a live quote rather than a settled
+    #: daily bar.  Provisional rows never count as "history is fresh", and the
+    #: next history fetch overwrites them with the real bar.
+    provisional: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="0"
+    )
     source: Mapped[str] = mapped_column(String(40), nullable=False, default="unknown")
     fetched_at: Mapped[dt.datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
@@ -240,3 +246,54 @@ class DataFetchLog(Base):
     row_count: Mapped[int | None] = mapped_column(Integer)
     latency_ms: Mapped[int | None] = mapped_column(Integer)
 
+
+
+class StockSplit(Base):
+    """A detected share split: ``split_to`` new shares per ``split_from`` old.
+
+    ``split_date`` is the first session priced on the new basis.  Stored bars,
+    paper positions and calls are rescaled once when the split is recorded;
+    the real-trade ledger is left as entered and adjusted on replay
+    (``app/tracking/lots.py``), so the user's own records are never rewritten.
+    """
+
+    __tablename__ = "stock_splits"
+    __table_args__ = (
+        UniqueConstraint("ticker_id", "split_date", name="uq_stock_splits_ticker_date"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    ticker_id: Mapped[int] = mapped_column(
+        ForeignKey("tickers.id", ondelete="CASCADE"), index=True
+    )
+    split_date: Mapped[dt.date] = mapped_column(Date, nullable=False)
+    split_from: Mapped[int] = mapped_column(Integer, nullable=False)
+    split_to: Mapped[int] = mapped_column(Integer, nullable=False)
+    source: Mapped[str] = mapped_column(String(40), nullable=False, default="unknown")
+    detected_at: Mapped[dt.datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    ticker: Mapped[Ticker] = relationship()
+
+
+class Dividend(Base):
+    """A cash dividend per share, keyed by ex-dividend date (split-adjusted)."""
+
+    __tablename__ = "dividends"
+    __table_args__ = (
+        UniqueConstraint("ticker_id", "ex_date", name="uq_dividends_ticker_exdate"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    ticker_id: Mapped[int] = mapped_column(
+        ForeignKey("tickers.id", ondelete="CASCADE"), index=True
+    )
+    ex_date: Mapped[dt.date] = mapped_column(Date, nullable=False, index=True)
+    amount: Mapped[Decimal] = mapped_column(PRICE, nullable=False)
+    source: Mapped[str] = mapped_column(String(40), nullable=False, default="unknown")
+    fetched_at: Mapped[dt.datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    ticker: Mapped[Ticker] = relationship()
