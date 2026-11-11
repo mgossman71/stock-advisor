@@ -165,6 +165,34 @@ class PortfolioSnapshot(Base):
     )
 
 
+class CashAdjustment(Base):
+    """Deposit (+) or withdrawal (-) of paper cash, requested by the user.
+
+    Deliberately NOT an order: a deposit is not a trade and never counts
+    toward realized P&L or the ``total_return_pct`` base.  ``daily_pnl`` in
+    snapshots nets these out so a deposit cannot masquerade as profit.
+    """
+
+    __tablename__ = "cash_adjustments"
+    __table_args__ = (Index("ix_cash_adjustments_created_at", "created_at"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    account_id: Mapped[int] = mapped_column(
+        ForeignKey("accounts.id", ondelete="CASCADE"), index=True
+    )
+    #: Signed amount in account currency: positive = deposit, negative = withdrawal.
+    delta: Mapped[Decimal] = mapped_column(MONEY, nullable=False)
+    note: Mapped[str | None] = mapped_column(String(200))
+    created_at: Mapped[dt.datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    account: Mapped[Account] = relationship()
+
+    def __repr__(self) -> str:  # pragma: no cover - debugging aid
+        return f"<CashAdjustment {self.delta:+}>"
+
+
 class Alert(Base):
     """User- or system-created alert; triggered ones surface as the UI badge."""
 

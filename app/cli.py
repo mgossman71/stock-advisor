@@ -4,6 +4,7 @@
     python -m app.cli fetch-universe --size 60 --with-history
     python -m app.cli stats
     python -m app.cli providers
+    python -m app.cli adjust-cash 500 --withdraw --note "rebalance"
 """
 
 from __future__ import annotations
@@ -12,6 +13,7 @@ import argparse
 import datetime as dt
 import logging
 import sys
+from decimal import Decimal
 
 from sqlalchemy import func, select
 
@@ -23,7 +25,11 @@ from app.ingestion.stats import coverage_by_ticker, recent_fetch_log, table_coun
 from app.ingestion.universe import load_universe, persist_universe
 from app.providers.registry import build_provider, provider_names
 from app.research.engine import RuleBasedAdvisor
-from app.trading.accounts import get_or_open_account
+from app.trading.accounts import (
+    CashAdjustmentError,
+    adjust_cash,
+    get_or_open_account,
+)
 from app.trading.orders import execute_order, latest_price
 from app.trading.snapshots import mark_positions, portfolio_values, write_snapshot
 
@@ -196,6 +202,27 @@ def cmd_portfolio(_: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_adjust_cash(args: argparse.Namespace) -> int:
+    """Deposit or withdraw paper cash (auditable adjustment, not a trade)."""
+    settings = get_settings()
+    delta = Decimal(str(args.amount))
+    if args.withdraw:
+        delta = -abs(delta)
+    with session_scope() as session:
+        account = get_or_open_account(session, settings)
+        try:
+            adjust_cash(session, account, delta, note=args.note)
+        except CashAdjustmentError as exc:
+            print(f"rejected: {exc}")
+            return 1
+        verb = "deposited" if delta > 0 else "withdrew"
+        print(f"{verb} {abs(delta):,.2f} -> cash {account.cash_balance:,.2f}")
+        write_snapshot(session, account, dt.date.today(),
+                       benchmark_symbol=settings.benchmark_symbol)
+        session.commit()
+    return 0
+
+
 def _print_portfolio(session, account, settings) -> None:
     """Print open positions + equity (shared by trade/portfolio commands)."""
     values = portfolio_values(session, account)
@@ -278,6 +305,14 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("portfolio", help="account + open positions + snapshot").set_defaults(
         func=cmd_portfolio
     )
+
+    adjust = sub.add_parser("adjust-cash",
+                            help="deposit cash (or --withdraw) without a trade")
+    adjust.add_argument("amount", type=Decimal, help="positive dollar amount")
+    adjust.add_argument("--withdraw", action="store_true",
+                        help="take cash out instead of depositing")
+    adjust.add_argument("--note", default=None)
+    adjust.set_defaults(func=cmd_adjust_cash)
 
     research = sub.add_parser("research", help="score + report one symbol")
     research.add_argument("symbol")

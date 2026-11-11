@@ -24,6 +24,7 @@ from app.db.models_market import (
 from app.db.models_trading import (
     Account,
     Alert,
+    CashAdjustment,
     Order,
     PortfolioSnapshot,
     Position,
@@ -34,6 +35,7 @@ __all__ = [
     "Alert",
     "AnalystAction",
     "AppSetting",
+    "CashAdjustment",
     "DataFetchLog",
     "EarningsEvent",
     "Fundamentals",

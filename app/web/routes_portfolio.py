@@ -11,8 +11,8 @@ from sqlalchemy import select
 
 from app.config import get_settings
 from app.db.base import session_scope
-from app.db.models import Order, Position, Ticker
-from app.trading.accounts import get_or_open_account
+from app.db.models import CashAdjustment, Order, Position, Ticker
+from app.trading.accounts import CashAdjustmentError, adjust_cash, get_or_open_account
 from app.trading.orders import execute_order
 from app.trading.sizing import suggested_size
 from app.trading.snapshots import mark_positions, portfolio_values, write_snapshot
@@ -66,12 +66,16 @@ def portfolio_page(request: Request, prefill: int | None = None):
             key=lambda kv: abs(kv[1]), reverse=True,
         )
         symbols = session.scalars(select(Ticker.symbol).order_by(Ticker.symbol)).all()
+        adjustments = session.scalars(
+            select(CashAdjustment).where(CashAdjustment.account_id == account.id)
+            .order_by(CashAdjustment.created_at.desc()).limit(25)
+        ).all()
     return templates.TemplateResponse(
         request=request, name="portfolio.html",
         context={"disclaimer": DISCLAIMER, "account": account, "positions": positions,
                  "values": values, "orders": orders, "prefill": prefill_data,
                  "realized": realized, "symbols": symbols, "settings": settings,
-                 "data_today": dt.date.today()},
+                 "adjustments": adjustments, "data_today": dt.date.today()},
     )
 
 
@@ -115,4 +119,49 @@ def place_order(
         context={"disclaimer": DISCLAIMER, "accepted": result.accepted,
                  "message": message, "reason": result.reason, "account": account,
                  "positions": positions, "values": values, "settings": settings},
+    )
+
+
+@router.post("/portfolio/adjust-cash", response_class=HTMLResponse)
+def adjust_cash_route(
+    request: Request,
+    direction: str = Form(..., pattern="^(deposit|withdraw)$"),
+    amount: str = Form(...),
+    note: str | None = Form(None),
+):
+    """HTMX deposit/withdraw submit: same result fragment as the order ticket."""
+    settings = get_settings()
+    with session_scope() as session:
+        account = get_or_open_account(session, settings)
+
+        def _reject(reason: str) -> HTMLResponse:
+            return templates.TemplateResponse(
+                request=request, name="partials/order_result.html", status_code=422,
+                context={"disclaimer": DISCLAIMER, "accepted": False, "message": None,
+                         "reason": reason, "account": account, "positions": [],
+                         "values": {}, "settings": settings},
+            )
+
+        try:
+            amt = Decimal(amount)
+        except InvalidOperation:
+            return _reject("amount must be a number")
+        delta = amt if direction == "deposit" else -amt
+        try:
+            adjust_cash(session, account, delta, note or None)
+        except CashAdjustmentError as exc:
+            return _reject(str(exc))
+        mark_positions(session, account)
+        positions = _positions_context(session, account)
+        values = portfolio_values(session, account)
+        write_snapshot(session, account, dt.date.today(),
+                       benchmark_symbol=settings.benchmark_symbol)
+        session.commit()
+        verb = "Deposit" if delta > 0 else "Withdrawal"
+        message = f"{verb} of {abs(delta):,.2f} booked - cash now {values['cash']:,.2f}"
+    return templates.TemplateResponse(
+        request=request, name="partials/order_result.html",
+        context={"disclaimer": DISCLAIMER, "accepted": True, "message": message,
+                 "reason": None, "account": account, "positions": positions,
+                 "values": values, "settings": settings},
     )

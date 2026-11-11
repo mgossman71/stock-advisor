@@ -33,6 +33,7 @@ bash scripts/bootstrap.sh      # .venv (Python 3.11/3.12), install deps, migrate
 .venv/bin/python -m app.cli providers / stats / fetch AAPL --period 1y
 .venv/bin/python -m app.cli research AAPL [--refresh]   # full report + calls
 .venv/bin/python -m app.cli trade buy AAPL 10 [--fetch] # paper order
+.venv/bin/python -m app.cli adjust-cash 500 [--withdraw] [--note ...]  # cash in/out, not a trade
 .venv/bin/python -m app.cli portfolio                  # marks + day snapshot
 ```
 

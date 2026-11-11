@@ -12,6 +12,18 @@
       <div class="kpi">{{ values.positions_value|money }}<small>positions</small></div>
       <div class="kpi">{{ values.short_exposure|money }}<small>short exposure</small></div>
     </div>
+    <form hx-post="/portfolio/adjust-cash" hx-target="#adjust-result" hx-swap="innerHTML" class="inline"
+          style="margin-top:.75rem">
+      <select name="direction" required>
+        <option value="deposit">DEPOSIT</option>
+        <option value="withdraw">WITHDRAW</option>
+      </select>
+      <input name="amount" type="number" step="0.01" min="0.01" placeholder="amount"
+             style="width:8rem" required>
+      <input name="note" placeholder="note (optional)" style="width:12rem">
+      <button class="btn" type="submit">Adjust cash</button>
+    </form>
+    <div id="adjust-result"></div>
   </div>
   <div class="panel">
     <h2>Order ticket <span class="muted">simulated fills at latest close ± slippage</span></h2>
@@ -69,6 +81,22 @@
   {% endfor %}</table>
 </div>
 {% endif %}
+
+<div class="panel" style="margin-top:1rem">
+  <h2>Cash adjustments <span class="muted">deposits/withdrawals - not trading performance</span></h2>
+  <table>
+    <tr><th>When</th><th class="num">Amount</th><th>Note</th></tr>
+    {% for a in adjustments %}
+    <tr>
+      <td class="muted">{{ a.created_at|as_of }}</td>
+      <td class="num {{ 'pos' if a.delta > 0 else 'neg' }}">{{ a.delta|money }}</td>
+      <td class="muted">{{ a.note or "" }}</td>
+    </tr>
+    {% else %}
+    <tr><td colspan="3" class="muted">No deposits or withdrawals yet.</td></tr>
+    {% endfor %}
+  </table>
+</div>
 
 <div class="panel" style="margin-top:1rem">
   <h2>Trade history</h2>

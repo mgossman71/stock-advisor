@@ -16,10 +16,10 @@ from __future__ import annotations
 import datetime as dt
 from decimal import Decimal
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.db.models import Account, PortfolioSnapshot, Position, PriceHistory, Ticker
+from app.db.models import Account, CashAdjustment, PortfolioSnapshot, Position, PriceHistory, Ticker
 from app.trading.orders import latest_price
 from app.trading.positions import position_market_value
 
@@ -112,13 +112,38 @@ def write_snapshot(
     row.total_value = values["total_value"]
     row.spx_close = spx
     row.short_exposure = values["short_exposure"]
-    row.daily_pnl = (
-        values["total_value"] - previous if previous is not None else None
-    )
+    if previous is None:
+        row.daily_pnl = None
+    else:
+        # A deposit is not a gain: strip out any cash adjustments booked after
+        # the previous snapshot (up to and including this snapshot's date) so
+        # the equity curve's daily P&L reflects trading performance only.
+        prev_date = session.scalar(
+            select(func.max(PortfolioSnapshot.snapshot_date)).where(
+                PortfolioSnapshot.snapshot_date < on_date
+            )
+        )
+        net_adj = session.scalar(
+            select(func.coalesce(func.sum(CashAdjustment.delta), 0)).where(
+                CashAdjustment.account_id == account.id,
+                func.date(CashAdjustment.created_at) > prev_date,
+                func.date(CashAdjustment.created_at) <= on_date,
+            )
+        )
+        row.daily_pnl = values["total_value"] - previous - Decimal(str(net_adj or 0))
+    base = account.initial_cash
+    if base:
+        # A deposit is capital, not performance: keep the return base in step
+        # with cash the user actually put in.
+        net_all = session.scalar(
+            select(func.coalesce(func.sum(CashAdjustment.delta), 0)).where(
+                CashAdjustment.account_id == account.id,
+                func.date(CashAdjustment.created_at) <= on_date,
+            )
+        )
+        base = base + Decimal(str(net_all or 0))
     row.total_return_pct = (
-        (values["total_value"] / account.initial_cash - Decimal("1")) * Decimal("100")
-        if account.initial_cash
-        else None
+        (values["total_value"] - base) / base * Decimal("100") if base else None
     )
     session.flush()
     return row

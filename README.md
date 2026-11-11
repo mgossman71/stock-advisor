@@ -14,7 +14,9 @@ Alpine.js + Chart.js / SQLite (Alembic-migrated, Postgres-portable).
   rationale, stop/target and confidence. Every call cites its data.
 - **Paper trading** — one account, market/limit-style simulated fills at the
   latest stored close ± slippage, full short support with borrow accrual,
-  risk-per-trade position sizing.
+  risk-per-trade position sizing.  You set the balance: deposits/withdrawals
+  (`adjust-cash` or the portfolio page) are booked in an auditable
+  `cash_adjustments` ledger and excluded from daily P&L and return %.
 - **Monitoring** — a nightly job (APScheduler + manual `POST /jobs/refresh`)
   refreshes prices, screens the universe, grades every call at 30/90/180 days
   against `^GSPC`, evaluates alerts and writes the daily equity snapshot.
