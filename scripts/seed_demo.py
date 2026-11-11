@@ -26,6 +26,7 @@ from app.ingestion.ingest import refresh_symbol
 from app.ingestion.universe import load_universe, persist_universe
 from app.providers.registry import build_provider
 from app.research.engine import RuleBasedAdvisor
+from app.research.scan import record_universe_refresh
 from app.research.scoring import ensure_default_weights
 from app.trading.accounts import get_or_open_account
 from app.trading.snapshots import mark_positions, write_snapshot
@@ -46,8 +47,11 @@ def main() -> int:
     with session_scope() as session:
         account = get_or_open_account(session, settings)
         ensure_default_weights(session)
-        universe = load_universe(settings, limit=max(20, settings.universe_size))
-        count = persist_universe(session, universe.members)
+        universe = load_universe(settings)
+        count = persist_universe(session, universe.members,
+                                 replace=universe.source in ("nasdaq", "us_listed_csv"))
+        record_universe_refresh(session, universe.source, count,
+                                stamp=universe.source == "nasdaq")
         print(f"universe: source={universe.source} persisted={count}")
         session.commit()
 

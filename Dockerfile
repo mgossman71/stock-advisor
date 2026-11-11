@@ -30,6 +30,8 @@ COPY scripts ./scripts
 # Offline fallback for the S&P 500 universe: Wikipedia is rate-limited/unreachable
 # from containers fairly often, and this CSV is why that is not fatal.
 COPY data/sp500.csv ./data/sp500.csv
+# Offline fallback for the US-listed scan universe (Nasdaq screener cache).
+COPY data/us_listed.csv ./data/us_listed.csv
 
 # Unprivileged user; /data is the SQLite volume and must be writable by it.
 RUN chmod +x ./scripts/docker-entrypoint.sh \

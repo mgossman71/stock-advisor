@@ -3,54 +3,97 @@
 {% block title %}Screener — Stock Advisor{% endblock %}
 {% block content %}
 <h1>Screener</h1>
+<p class="muted">
+  {% if scan_date %}
+  Scanned <b>{{ scanned }}</b> of {{ universe_count }} US-listed stocks on {{ scan_date|as_of }}
+  ({{ with_fundamentals }} with fundamentals so far; the rest are scored on price alone until
+  their turn in the nightly rotation).
+  The top <b>{{ config.shortlist_size }}</b> get the full research: news, analyst actions,
+  earnings and the AI analyst, if one is configured.
+  {% else %}
+  No scan yet. The next full refresh scans every stock in the universe
+  ({{ universe_count }} loaded so far).
+  {% endif %}
+  {% if info.source %}
+  <br>Stock list: {{ info.count or universe_count }} stocks from
+  {{ {"nasdaq": "the Nasdaq screener", "us_listed_csv": "the cached Nasdaq list",
+       "wikipedia": "the S&P 500 (Wikipedia)", "csv": "the S&P 500 (cached)",
+       "config": "SEED_SYMBOLS"}.get(info.source, info.source) }}
+  {% if info.refreshed_at %}· refreshed {{ info.refreshed_at|as_of }}{% endif %}
+  · floors: market cap ≥ ${{ (config.min_market_cap / 1000000)|round|int }}M,
+  price ≥ ${{ config.min_price }}, ≥ ${{ (config.min_dollar_volume / 1000000)|round(1) }}M traded a day
+  (<a href="/settings#discovery">change</a>)
+  {% endif %}
+</p>
+
 <form class="inline" method="get" action="/screen">
-  <input name="q" placeholder="symbol…" value="{{ q or '' }}">
+  <input name="q" placeholder="symbol or name…" value="{{ q or '' }}">
   <select name="sector">
     <option value="">all sectors</option>
     {% for s in sectors %}<option value="{{ s }}" {{ 'selected' if s == sector }}>{{ s }}</option>{% endfor %}
   </select>
+  <select name="cap">
+    <option value="">all sizes</option>
+    {% for key, label, _ in cap_bands %}<option value="{{ key }}" {{ 'selected' if cap == key }}>{{ label }}</option>{% endfor %}
+  </select>
+  <select name="held">
+    <option value="">held + not held</option>
+    <option value="yes" {{ 'selected' if held == 'yes' }}>only what I hold</option>
+    <option value="no" {{ 'selected' if held == 'no' }}>only what I don't hold</option>
+  </select>
+  <select name="view">
+    <option value="">whole scan</option>
+    <option value="shortlist" {{ 'selected' if view == 'shortlist' }}>shortlist only</option>
+  </select>
+  <select name="sort">
+    <option value="rank">sort: scan rank</option>
+    {% for b in blocks %}<option value="{{ b }}" {{ 'selected' if sort == b }}>sort: {{ b }}</option>{% endfor %}
+  </select>
   <button class="btn" type="submit">Filter</button>
   <button class="btn secondary" hx-post="/screen/run" hx-target="#screen-result"
-          hx-swap="innerHTML" type="button">Screen now (score stored data)</button>
+          hx-swap="innerHTML" type="button">Re-scan stored data</button>
 </form>
 <div id="screen-result"></div>
 
-<div class="panel" style="margin-top:1rem"
-     x-data="{ key: 'score', dir: -1,
-               sort(rows){ rows.sort((a,b)=> (a.dataset[key]===''?-1e9:+a.dataset[key]) - (b.dataset[key]===''?-1e9:+b.dataset[key]) ); return rows } }">
-  <table id="screener">
-    <thead>
-      <tr>
-        <th @click="key='symbol'">Symbol</th><th class="muted">Sector</th>
-        <th class="num" @click="key='score'">Score</th>
-        <th class="num" @click="key='value'">Value</th>
-        <th class="num" @click="key='momentum'">Momentum</th>
-        <th class="num" @click="key='quality'">Quality</th>
-        <th class="num" @click="key='sentiment'">Sentiment</th>
-        <th class="num" @click="key='risk'">Risk</th>
-        <th>Stance</th><th>Scored</th>
-      </tr>
-    </thead>
-    <tbody>
-      {% for row in rows %}
-      <tr :class="key" data-symbol="{{ row.ticker.symbol }}"
-          data-score="{{ row.score if row.score is not none else '' }}"
-          data-value="{{ row.subs.value if row.subs.value is not none else '' }}"
-          data-momentum="{{ row.subs.momentum if row.subs.momentum is not none else '' }}"
-          data-quality="{{ row.subs.quality if row.subs.quality is not none else '' }}"
-          data-sentiment="{{ row.subs.sentiment if row.subs.sentiment is not none else '' }}"
-          data-risk="{{ row.subs.risk if row.subs.risk is not none else '' }}">
-        <td><a href="/research/{{ row.ticker.symbol }}">{{ row.ticker.symbol }}</a></td>
-        <td class="muted">{{ row.ticker.sector or "—" }}</td>
-        <td class="num mono">{{ row.score if row.score is not none else "—" }}</td>
-        {% for block in ['value','momentum','quality','sentiment','risk'] %}
-        <td class="num mono muted">{{ row.subs.get(block) if row.subs.get(block) is not none else "n/a" }}</td>
-        {% endfor %}
-        <td class="{{ row.stance or 'muted' }}">{{ row.stance or "not scored" }}</td>
-        <td class="muted">{{ row.created_at|as_of if row.created_at else "—" }}</td>
-      </tr>
+<div class="panel" style="margin-top:1rem">
+  <div class="tablewrap">
+  <table class="wide" id="screener">
+    <tr><th class="num">#</th><th>Symbol</th><th>Name</th><th class="muted">Sector</th>
+        <th class="num">Mkt cap</th><th class="num">Scan</th>
+        <th class="num">Value</th><th class="num">Momentum</th><th class="num">Quality</th>
+        <th class="num">Risk</th><th>Full report</th><th>You hold</th></tr>
+    {% for row in rows %}
+    <tr>
+      <td class="num mono">{{ row.scan.rank }}{% if row.shortlisted %} <span class="pill" title="shortlisted: full research tonight">★</span>{% endif %}</td>
+      <td><a href="/research/{{ row.ticker.symbol }}">{{ row.ticker.symbol }}</a></td>
+      <td>{{ row.ticker.name or "—" }}</td>
+      <td class="muted">{{ row.ticker.sector or "—" }}</td>
+      <td class="num mono">{{ row.cap }}</td>
+      <td class="num mono">{{ row.scan.score|round(1) }}{% if not row.scan.has_fundamentals %} <span class="muted" title="no fundamentals yet: price-only score">ᵖ</span>{% endif %}</td>
+      {% for b in blocks %}
+      <td class="num mono muted">{{ row.subs[b]|round(1) if row.subs[b] is not none else "n/a" }}</td>
       {% endfor %}
-    </tbody>
+      {% if row.report %}
+      <td class="{{ row.report.overall_stance }}">{{ row.report.overall_stance }} {{ row.report.score|round(1) }}</td>
+      {% else %}
+      <td class="muted">—</td>
+      {% endif %}
+      <td class="{{ 'held' if row.held else 'muted' }}" style="white-space:nowrap">{{ row.held|join(' · ') if row.held else '—' }}</td>
+    </tr>
+    {% else %}
+    <tr><td colspan="12" class="muted">Nothing matches.</td></tr>
+    {% endfor %}
   </table>
+  </div>
+  {% if not all and matched > page_rows %}
+  <p class="muted">Showing the first {{ page_rows }} of {{ matched }}.
+    <a href="?{{ request.query_params|string }}{{ '&' if request.query_params|string }}all=1">Show all</a></p>
+  {% endif %}
+  <p class="muted"><b>Scan</b> = the same scoring weights as a full report, from stored
+    prices and the latest fundamentals. There is no news, analyst-action or earnings data at
+    this stage, so <i>sentiment</i> only sees the consensus price target.
+    ★ = shortlisted for full research. ᵖ = price-only score (fundamentals not fetched yet),
+    ranked after every stock that has fundamentals. <b>Full report</b> = the latest
+    complete research verdict, if the stock has one.</p>
 </div>
 {% endblock %}

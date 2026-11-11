@@ -34,7 +34,9 @@
       defaults; if the model is unreachable or replies badly, the rules engine is used and the report says so.
       Ollama: <code>http://localhost:11434/v1</code> · LM Studio: <code>http://localhost:1234/v1</code> ·
       from the Docker container use <code>host.docker.internal</code> instead of <code>localhost</code>.
-      The nightly screen makes one call per ticker; untick it if your hardware is slow.</p>
+      The nightly screen makes one model call per shortlisted stock (the top {{ scan.shortlist_size }}
+      of the scan, plus what you hold or watch), never one per stock in the universe.
+      Untick it if your hardware is slow.</p>
   </div>
   <div class="panel" id="autorefresh">
     <h2>Auto-refresh <span class="muted">(runs the refresh job on a timer)</span>
@@ -64,11 +66,37 @@
       {% endif %}
       <b>Prices only</b> is the <b>Refresh prices</b> button: live quotes for what you hold or watch
       (positions, real holdings, pending orders, alerts, open calls, watchlist), then fills, marks and
-      alerts. It takes seconds. <b>Full refresh</b> is the other button: history, fundamentals and news
-      for the whole universe, then a re-screen. It takes minutes, and if the AI analyst is used in the
-      screen it makes one model call per ticker. A run that's due while another job is still going is
+      alerts. It takes seconds. <b>Full refresh</b> is the other button: it scans the whole universe
+      (prices plus a rotating slice of fundamentals), then fetches news, analyst actions and earnings for the
+      shortlist and re-screens it. It can take an hour or more, and if the AI analyst is used in
+      the screen, it makes one model call per shortlisted stock. A run that's due while another job is still going is
       skipped, so a short interval can't stack up. Market hours = Mon–Fri 09:30–16:15 New York time
       (holidays not excluded). The nightly job ({{ settings.nightly_cron }} UTC) runs regardless.</p>
+  </div>
+  <div class="panel" id="discovery">
+    <h2>Stock discovery <span class="muted">(which stocks get scanned, and how many get full research)</span></h2>
+    <form method="post" action="/settings/scan" class="inline">
+      <label>market cap ≥ $<input name="scan_min_market_cap_m" size="6" inputmode="decimal"
+        value="{{ (scan.min_market_cap / 1000000)|round|int }}">M</label>
+      <label>price ≥ $<input name="scan_min_price" size="4" inputmode="decimal"
+        value="{{ scan.min_price.normalize() }}"></label>
+      <label>traded ≥ $<input name="scan_min_dollar_volume_m" size="4" inputmode="decimal"
+        value="{{ (scan.min_dollar_volume / 1000000).normalize() }}">M a day</label>
+      <label>shortlist <input name="scan_shortlist_size" size="3" inputmode="numeric"
+        value="{{ scan.shortlist_size }}"> stocks</label>
+      <label>fundamentals <input name="scan_fundamentals_per_night" size="4" inputmode="numeric"
+        value="{{ scan.fundamentals_per_night }}"> a night</label>
+      <button class="btn" type="submit">Save</button>
+    </form>
+    <p class="muted">
+      {% if universe.source %}Stock list: {{ universe.count or '?' }} stocks from <i>{{ universe.source }}</i>{% if universe.refreshed_at %}, refreshed {{ universe.refreshed_at|as_of }}{% else %}. The live list hasn't loaded yet, so the next full refresh will retry{% endif %}.
+      {% else %}The stock list loads on the next full refresh.{% endif %}
+      Every NYSE/Nasdaq common stock above these floors is scanned each night from cheap data:
+      prices, plus fundamentals refreshed on a rotation, stalest first. The list is rebuilt
+      weekly, and on the next full refresh after you change a floor.
+      The top <b>shortlist</b> stocks by scan score, plus everything you hold or watch, then get the
+      full research: news, analyst actions, earnings, a full report and the AI analyst, if it's on.
+      A bigger shortlist costs more AI time. See the <a href="/screen">Screener</a>.</p>
   </div>
   <div class="panel">
     <h2>Scoring weights <span class="muted">(must sum to 1.0; used by every future report)</span></h2>

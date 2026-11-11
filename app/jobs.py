@@ -6,9 +6,12 @@ symbol the user holds or watches, then fills/marks/snapshot/alerts.  No
 history, fundamentals, news, screening or grading - those stay in the full
 pass, which is what makes the full pass slow.
 
-One pass = fetch what matters -> accrue borrow -> book dividends -> retry
-pending limit orders -> mark positions -> snapshot the day -> score/screen -> grade
-outcomes -> evaluate alerts.
+One pass is a funnel (see ``app.research.scan``): refresh the US-listed stock
+list when due -> cheap history for every universe stock + a rotating slice of
+fundamentals -> scan-score them all -> full fetch (news, analysts, earnings)
+for the shortlist and everything held/watched -> accrue borrow -> book
+dividends -> retry pending limit orders -> mark positions -> snapshot the day
+-> full reports (+ LLM) for the shortlist -> grade outcomes -> evaluate alerts.
 
 Idempotency is the contract (acceptance criterion #4): ``POST /jobs/refresh``
 twice in a row must be safe.  It is, because ingestion upserts on
@@ -35,11 +38,18 @@ from app.db.models import (
 )
 from app.background import Progress
 from app.db.base import session_scope
-from app.ingestion.ingest import ingest_quote, log_fetch, refresh_symbol
+from app.ingestion.ingest import (
+    ingest_fundamentals, ingest_history, ingest_quote, log_fetch, refresh_symbol,
+)
 from app.ingestion.universe import load_universe, persist_universe
 from app.providers.registry import build_provider
 from app.providers.base import MarketDataProvider
 from app.research.outcomes import grade_recommendation, update_statuses
+from app.research.scan import (
+    SCAN_LOOKBACK_DAYS, ScanResult, fundamentals_due, load_scan_config,
+    record_universe_refresh, run_scan, shortlist_symbols, universe_due,
+    universe_stock_symbols,
+)
 from app.research.screener import screen_universe
 from app.trading.accounts import get_or_open_account
 from app.tracking.lots import open_lots
@@ -56,6 +66,11 @@ class JobReport:
 
     fetched: list[str] = field(default_factory=list)
     fetch_errors: list[str] = field(default_factory=list)
+    #: Funnel stage 1: universe stocks whose history was refreshed / scored.
+    scan_fetched: int = 0
+    scan_fetch_errors: int = 0
+    fundamentals_refreshed: int = 0
+    scan: dict = field(default_factory=dict)
     scored: int = 0
     new_recommendations: int = 0
     graded: int = 0
@@ -70,6 +85,8 @@ class JobReport:
     def as_dict(self) -> dict:
         return {
             "fetched": self.fetched, "fetch_errors": self.fetch_errors,
+            "scan_fetched": self.scan_fetched, "scan_fetch_errors": self.scan_fetch_errors,
+            "fundamentals_refreshed": self.fundamentals_refreshed, "scan": self.scan,
             "scored": self.scored, "new_recommendations": self.new_recommendations,
             "graded": self.graded, "statuses": self.statuses,
             "borrow_charged": str(self.borrow_charged),
@@ -127,12 +144,21 @@ def price_symbols(session: Session, settings: Settings) -> list[str]:
 
 
 def target_symbols(session: Session, settings: Settings) -> list[str]:
-    """Everything the nightly job must keep fresh: the screening universe +
-    everything ``price_symbols`` covers + VIX."""
+    """What gets the *full* nightly fetch (news, analysts, earnings,
+    dividends): the latest scan's shortlist + everything ``price_symbols``
+    covers + VIX.  The rest of the universe only gets cheap history
+    (``scan_fetch_symbols``)."""
     symbols = set(price_symbols(session, settings))
-    symbols.update(session.scalars(select(Ticker.symbol).where(Ticker.in_universe.is_(True))))
+    symbols.update(shortlist_symbols(session))
     symbols.add(settings.vix_symbol)
     return sorted(symbols)
+
+
+def scan_fetch_symbols(session: Session, settings: Settings) -> list[str]:
+    """Universe stocks that only need history for the scan (not held/watched -
+    those get the full fetch anyway)."""
+    held = set(price_symbols(session, settings))
+    return [s for s in universe_stock_symbols(session) if s not in held]
 
 
 def _borrow_already_charged(session: Session, today: dt.date) -> bool:
@@ -146,19 +172,21 @@ def _borrow_already_charged(session: Session, today: dt.date) -> bool:
 
 
 def needs_first_run(session: Session) -> bool:
-    """A fresh install: no screening universe yet, or most of it never screened.
+    """A fresh install: no screening universe yet, or most of it never scanned.
 
     The second half makes setup resumable - if the process stopped during the
     first fetch (or only the seed script ran, which researches a handful),
     the next start runs it again and ingestion skips what is already fresh.
     """
+    from app.db.models import ScanScore
+
     universe = session.scalar(
         select(func.count(Ticker.id)).where(Ticker.in_universe.is_(True))) or 0
-    screened = session.scalar(
-        select(func.count(func.distinct(ResearchReport.ticker_id)))
-        .join(Ticker, Ticker.id == ResearchReport.ticker_id)
+    scanned = session.scalar(
+        select(func.count(func.distinct(ScanScore.ticker_id)))
+        .join(Ticker, Ticker.id == ScanScore.ticker_id)
         .where(Ticker.in_universe.is_(True))) or 0
-    return universe == 0 or screened * 2 < universe
+    return universe == 0 or scanned * 2 < universe
 
 
 def run_pipeline(progress: Progress | None = None, *, max_symbols: int | None = None,
@@ -168,7 +196,8 @@ def run_pipeline(progress: Progress | None = None, *, max_symbols: int | None = 
     with session_scope() as session:
         return run_nightly(session, build_provider(settings), settings=settings,
                            max_symbols=max_symbols, with_alternatives=with_alternatives,
-                           load_universe_if_empty=True, progress=progress)
+                           load_universe_if_empty=True, refresh_universe=True,
+                           progress=progress)
 
 
 def run_price_refresh(progress: Progress | None = None) -> PriceRefreshReport:
@@ -226,9 +255,13 @@ def refresh_prices(
 
 
 def run_screen_only(progress: Progress | None = None):
-    """Background entry point for "Screen now": score stored data, no fetching."""
+    """Background entry point for "Screen now": re-scan stored data, then
+    full reports for the shortlist.  No fetching."""
     with session_scope() as session:
+        scan = run_scan(session, progress=progress)
+        session.commit()
         stats = screen_universe(session, progress=progress, commit_each=True)
+        stats.scanned = scan.scored
         session.commit()
         return stats
 
@@ -237,7 +270,8 @@ def run_nightly(
     session: Session, provider: MarketDataProvider, *,
     settings: Settings | None = None, today: dt.date | None = None,
     max_symbols: int | None = None, with_alternatives: bool = False,
-    load_universe_if_empty: bool = False, progress: Progress | None = None,
+    load_universe_if_empty: bool = False, refresh_universe: bool = False,
+    progress: Progress | None = None,
 ) -> JobReport:
     """Full pipeline pass.  Safe to call any number of times per day."""
     settings = settings or get_settings()
@@ -249,21 +283,59 @@ def run_nightly(
         if progress is not None:
             progress(phase, done, total, detail)
 
-    # 0. a fresh install has no universe yet: load the stock list first
-    if load_universe_if_empty and not session.scalar(
-            select(func.count(Ticker.id)).where(Ticker.in_universe.is_(True))):
+    # 0. the stock list: on a fresh install, and weekly (``refresh_universe``)
+    has_universe = bool(session.scalar(
+        select(func.count(Ticker.id)).where(Ticker.in_universe.is_(True))))
+    if (load_universe_if_empty and not has_universe) or (
+            refresh_universe and universe_due(session, settings)):
         step("loading the stock list")
-        universe = load_universe(settings)
-        count = persist_universe(session, universe.members)
-        session.commit()
-        report.notes.append(f"universe loaded: {count} tickers from {universe.source}")
+        refresh_stock_list(session, settings, report, has_universe=has_universe)
 
-    # 1. fetch everything tracked (2 years of history the first time)
+    config = load_scan_config(session, settings)
+    price_held = set(price_symbols(session, settings))
+
+    # 1a. cheap history for every universe stock (skipped when already fresh)
+    scan_symbols = scan_fetch_symbols(session, settings)
+    if max_symbols:
+        scan_symbols = scan_symbols[:max_symbols]
+    since = today - dt.timedelta(days=SCAN_LOOKBACK_DAYS)
+    for index, symbol in enumerate(scan_symbols, start=1):
+        step("fetching prices", index - 1, len(scan_symbols), symbol)
+        try:
+            stats = ingest_history(session, provider, symbol, since, today)
+            report.scan_fetched += 1
+            report.notes.extend(f"{symbol}: {n}" for n in stats.notes if n.startswith("split "))
+        except Exception:  # provider chain already retried; keep the job alive
+            report.scan_fetch_errors += 1
+        session.commit()
+
+    # 1b. a rotating slice of fundamentals (stalest first)
+    due = [s for s in fundamentals_due(session, config.fundamentals_per_night, today)
+           if s not in price_held]
+    if max_symbols:
+        due = due[:max_symbols]
+    for index, symbol in enumerate(due, start=1):
+        step("fetching fundamentals", index - 1, len(due), symbol)
+        try:
+            if ingest_fundamentals(session, provider, symbol).written:
+                report.fundamentals_refreshed += 1
+        except Exception:
+            report.scan_fetch_errors += 1
+        session.commit()
+
+    # 1c. scan-score the whole universe -> shortlist
+    step("scanning")
+    scan: ScanResult = run_scan(session, today=today, shortlist_size=config.shortlist_size,
+                                progress=progress)
+    report.scan = scan.as_dict()
+    session.commit()
+
+    # 1d. the full fetch for the shortlist + everything held/watched
     symbols = target_symbols(session, settings)
     if max_symbols:
         symbols = symbols[:max_symbols]
     for index, symbol in enumerate(symbols, start=1):
-        step("fetching prices", index - 1, len(symbols), symbol)
+        step("fetching shortlist details", index - 1, len(symbols), symbol)
         asset = "index" if symbol in (settings.benchmark_symbol, settings.vix_symbol) else "stock"
         try:
             outcomes = refresh_symbol(session, provider, symbol,
@@ -319,6 +391,31 @@ def run_nightly(
     report.alerts_triggered = evaluate_alerts(session, settings, today=today)
     session.commit()
     return report
+
+
+def refresh_stock_list(session: Session, settings: Settings, report: JobReport, *,
+                       has_universe: bool) -> None:
+    """Rebuild the universe from the US-listed scan (floors from Settings).
+
+    Only a US-listed list (live or its cached CSV) may *replace* the universe;
+    a degraded fallback (S&P 500, seed symbols) is used solely to bootstrap an
+    empty database, so a flaky night can't shrink 3,000 stocks to 19.  Only a
+    live fetch stamps the refresh, so a failed one is retried next run.
+    """
+    config = load_scan_config(session, settings)
+    universe = load_universe(settings, min_market_cap=config.min_market_cap,
+                             min_price=config.min_price,
+                             min_dollar_volume=config.min_dollar_volume)
+    report.notes.extend(universe.notes)
+    us_listed = universe.source in ("nasdaq", "us_listed_csv")
+    if us_listed or not has_universe:
+        count = persist_universe(session, universe.members, replace=us_listed)
+        report.notes.append(f"universe loaded: {count} tickers from {universe.source}")
+        record_universe_refresh(session, universe.source, count,
+                                stamp=universe.source == "nasdaq")
+    else:
+        report.notes.append(f"stock list kept: {universe.source} fallback not applied")
+    session.commit()
 
 
 def evaluate_alerts(session: Session, settings: Settings, *,

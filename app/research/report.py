@@ -16,6 +16,7 @@ Rules:
 from __future__ import annotations
 
 import datetime as dt
+from dataclasses import dataclass
 from decimal import Decimal
 
 from sqlalchemy import func, select
@@ -36,6 +37,37 @@ LOOKBACK_DAYS = 800  # ~3 years of bars: enough for 12m returns + 200-day SMA
 
 #: Period label -> trading days, for the momentum block.
 _RETURN_DAYS = {"1m": 21, "3m": 63, "6m": 126, "12m": 252}
+
+
+@dataclass(frozen=True)
+class PriceSignals:
+    """Everything the momentum and risk blocks read from a close series."""
+
+    returns: dict[str, Decimal | None]
+    rsi: Decimal | None
+    dist_high: Decimal | None
+    above50: bool | None
+    above200: bool | None
+    sma50: Decimal | None
+    sma200: Decimal | None
+    vol: Decimal | None
+    drawdown: Decimal | None
+
+
+def price_signals(closes: list[Decimal]) -> PriceSignals:
+    """Indicators shared by the full report and the cheap nightly scan."""
+    sma50, sma200 = indicators.sma(closes, 50), indicators.sma(closes, 200)
+    return PriceSignals(
+        returns={label: indicators.period_return(closes, days)
+                 for label, days in _RETURN_DAYS.items()},
+        rsi=indicators.rsi(closes),
+        dist_high=indicators.distance_from_high_pct(closes),
+        above50=closes[-1] > sma50 if closes and sma50 is not None else None,
+        above200=closes[-1] > sma200 if closes and sma200 is not None else None,
+        sma50=sma50, sma200=sma200,
+        vol=indicators.annualized_volatility_pct(closes),
+        drawdown=indicators.max_drawdown_pct(closes[-252:]) if len(closes) >= 2 else None,
+    )
 
 
 def closes_with_dates(session: Session, ticker_id: int) -> list[tuple[dt.date, Decimal]]:
@@ -96,15 +128,11 @@ def build_report(session: Session, symbol: str, *, persist: bool = True) -> Rese
     fund = _latest_fundamentals(session, ticker.id)
 
     # ---- indicators --------------------------------------------------------
-    returns = {label: indicators.period_return(closes, days)
-               for label, days in _RETURN_DAYS.items()}
-    rsi_value = indicators.rsi(closes)
-    dist_high = indicators.distance_from_high_pct(closes)
-    sma50, sma200 = indicators.sma(closes, 50), indicators.sma(closes, 200)
-    above50 = closes[-1] > sma50 if closes and sma50 is not None else None
-    above200 = closes[-1] > sma200 if closes and sma200 is not None else None
-    vol = indicators.annualized_volatility_pct(closes)
-    drawdown = indicators.max_drawdown_pct(closes[-252:]) if len(closes) >= 2 else None
+    signals = price_signals(closes)
+    returns, rsi_value = signals.returns, signals.rsi
+    dist_high, above50, above200 = signals.dist_high, signals.above50, signals.above200
+    vol, drawdown = signals.vol, signals.drawdown
+    sma50, sma200 = signals.sma50, signals.sma200
 
     # ---- analyst / news / earnings aggregates ------------------------------
     cutoff90 = dt.date.today() - dt.timedelta(days=90)

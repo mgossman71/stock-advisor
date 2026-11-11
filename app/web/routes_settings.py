@@ -16,6 +16,7 @@ from app.db.models import AppSetting, Order, ScoringWeight
 from app.research.llm import (
     LLMClient, LLMError, config_from_form, load_llm_config, save_llm_config,
 )
+from app.research import scan as scan_config
 from app.research.scoring import DEFAULT_WEIGHTS, ensure_default_weights
 from app.web.common import DISCLAIMER, templates
 
@@ -43,11 +44,13 @@ def settings_page(request: Request, pw: str = ""):
         has_orders = session.query(Order).count() > 0
         llm = load_llm_config(session)
         auto = autorefresh.load_config(session)
+        scan = scan_config.load_scan_config(session, settings)
+        universe = scan_config.universe_info(session)
     return templates.TemplateResponse(
         request=request, name="settings.html",
         context={"disclaimer": DISCLAIMER, "weights": weights,
                  "app_settings": app_settings, "settings": settings,
-                 "has_orders": has_orders, "llm": llm,
+                 "has_orders": has_orders, "llm": llm, "scan": scan, "universe": universe,
                  "auto": auto, "auto_next": autorefresh.next_run_at(),
                  "auto_live": autorefresh.scheduler_running(),
                  "auto_min": autorefresh.MIN_MINUTES, "auto_max": autorefresh.MAX_MINUTES,
@@ -135,6 +138,18 @@ def save_autorefresh(autorefresh_enabled: str = Form(""),
         session.commit()
     autorefresh.apply_schedule(config)
     return RedirectResponse("/settings#autorefresh", status_code=303)
+
+
+@router.post("/settings/scan")
+async def save_scan(request: Request):
+    """Scan floors + shortlist size; a changed floor rebuilds the stock list
+    on the next full refresh."""
+    form = await request.form()
+    with session_scope() as session:
+        current = scan_config.load_scan_config(session)
+        scan_config.save_scan_config(session, scan_config.config_from_form(form, current))
+        session.commit()
+    return RedirectResponse("/settings#discovery", status_code=303)
 
 
 @router.post("/settings/llm")

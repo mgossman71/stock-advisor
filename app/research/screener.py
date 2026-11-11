@@ -1,4 +1,4 @@
-"""Nightly screening: score the whole universe and emit recommendations.
+"""Nightly screening: full reports + recommendations for the scan shortlist.
 
 Fetch policy lives in the *job* (``app.jobs``), not here: the screener only
 scores what the DB already holds, so it is fast, offline-safe and idempotent.
@@ -27,6 +27,8 @@ class ScreenStats:
     """Counters for one screening pass."""
 
     scored: int = 0
+    #: Universe stocks scan-scored before this screen (``run_screen_only``).
+    scanned: int = 0
     skipped_short_history: int = 0
     skipped_unknown: int = 0
     new_recommendations: list[Recommendation] = field(default_factory=list)
@@ -34,21 +36,25 @@ class ScreenStats:
 
 
 def screening_candidates(session: Session) -> list[Ticker]:
-    """Universe members + watchlist + anything with an open position."""
+    """The funnel's deep stage: the latest scan's shortlist, plus everything
+    the user holds or watches (watchlist, open paper positions, real-ledger
+    lots).  The rest of the universe is only scanned - that is what keeps a
+    ~3,000-stock universe affordable when the LLM screens."""
     from app.db.models import Position
+    from app.research.scan import shortlist_symbols
+    from app.tracking.lots import open_lots
 
-    universe = set(session.scalars(
-        select(Ticker).where((Ticker.in_universe.is_(True)) | (Ticker.in_watchlist.is_(True)))
-    ))
-    with_positions = set()
-    account_ids = session.scalars(select(Position.account_id).distinct()).all()
-    if account_ids:
-        tickers = session.scalars(
-            select(Ticker).join(Position, Position.ticker_id == Ticker.id)
-            .where(Position.account_id.in_(account_ids), Position.qty != 0)
-        )
-        with_positions = set(tickers)
-    return sorted(universe | with_positions, key=lambda t: t.symbol)
+    symbols = set(shortlist_symbols(session))
+    symbols.update(session.scalars(select(Ticker.symbol).where(Ticker.in_watchlist.is_(True))))
+    symbols.update(session.scalars(
+        select(Ticker.symbol).join(Position, Position.ticker_id == Ticker.id)
+        .where(Position.qty != 0)))
+    symbols.update(lot.trade.ticker.symbol for lot in open_lots(session))
+    if not symbols:
+        return []
+    return list(session.scalars(
+        select(Ticker).where(Ticker.symbol.in_(symbols), Ticker.asset_class != "index")
+        .order_by(Ticker.symbol)))
 
 
 def screen_universe(

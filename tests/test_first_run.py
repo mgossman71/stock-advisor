@@ -17,7 +17,7 @@ import pytest
 from app import background
 from app.background import JobRunner
 from app.config import Settings, get_settings
-from app.db.models import PriceHistory, ResearchReport, Ticker
+from app.db.models import PriceHistory, ScanScore, Ticker
 from app.ingestion.ingest import ensure_ticker
 from app.ingestion.universe import UniverseResult
 from app.jobs import needs_first_run, run_nightly
@@ -76,13 +76,12 @@ def test_runner_captures_failures():
 def test_needs_first_run(session):
     assert needs_first_run(session)  # empty DB
     t = ensure_ticker(session, "ACME", in_universe=True)
-    assert needs_first_run(session)  # universe but never screened
-    session.add(ResearchReport(ticker_id=t.id, model_or_rule_version="rules-v1",
-                               summary="s", overall_stance="neutral", score=D("50"),
-                               payload_json={}))
+    assert needs_first_run(session)  # universe but never scanned
+    session.add(ScanScore(ticker_id=t.id, scan_date=DAY, score=D("50"), rank=1,
+                          sub_scores={}, has_fundamentals=False))
     session.flush()
     assert not needs_first_run(session)
-    # A seed-only DB: big universe, a handful researched -> still set up.
+    # A seed-only DB: big universe, a handful scanned -> still set up.
     for i in range(4):
         ensure_ticker(session, f"U{i}", in_universe=True)
     session.flush()
@@ -92,7 +91,7 @@ def test_needs_first_run(session):
 def test_pipeline_loads_universe_then_fetches_and_screens(session, monkeypatch):
     ensure_default_weights(session)
     settings = Settings(benchmark_symbol="^SPX", vix_symbol="^VIX", slippage_bps=D("0"))
-    monkeypatch.setattr("app.jobs.load_universe", lambda s: UniverseResult(
+    monkeypatch.setattr("app.jobs.load_universe", lambda s, **floors: UniverseResult(
         source="fake", members=[UniverseMember("ACME", "Acme", "Industrials")], notes=[]))
     bars = [make_bar(sym, DAY - dt.timedelta(days=90 - i), str(100 + i))
             for sym in ("ACME", "^SPX", "^VIX") for i in range(90)]
@@ -110,13 +109,15 @@ def test_pipeline_loads_universe_then_fetches_and_screens(session, monkeypatch):
     assert report.scored == 1
     assert not needs_first_run(session)
     assert phases[0] == "loading the stock list"
-    assert {"fetching prices", "screening", "grading past calls"} <= set(phases)
+    assert {"fetching prices", "scanning", "fetching shortlist details", "screening",
+            "grading past calls"} <= set(phases)
+    assert report.scan["scored"] == 1 and report.scan["shortlist"] == ["ACME"]
 
 
 def test_pipeline_leaves_an_existing_universe_alone(session, monkeypatch):
     ensure_ticker(session, "ACME", in_universe=True)
     monkeypatch.setattr("app.jobs.load_universe",
-                        lambda s: pytest.fail("universe must not reload"))
+                        lambda s, **floors: pytest.fail("universe must not reload"))
     run_nightly(session, FakeProvider(), settings=Settings(), today=DAY,
                 load_universe_if_empty=True)
 
@@ -158,14 +159,14 @@ def test_startup_sets_up_a_fresh_install(startup):
     assert started == ["first-run setup"]
 
 
-def test_startup_skips_setup_when_already_screened_or_disabled(startup, monkeypatch):
+def test_startup_skips_setup_when_already_scanned_or_disabled(startup, monkeypatch):
     main, started = startup
     from app.db.base import session_scope
 
     with session_scope() as s:
         t = ensure_ticker(s, "ACME", in_universe=True)
-        s.add(ResearchReport(ticker_id=t.id, model_or_rule_version="rules-v1", summary="s",
-                             overall_stance="neutral", score=D("50"), payload_json={}))
+        s.add(ScanScore(ticker_id=t.id, scan_date=DAY, score=D("50"), rank=1,
+                        sub_scores={}, has_fundamentals=False))
         s.commit()
     main.start_scheduler()
     assert started == []
@@ -173,7 +174,7 @@ def test_startup_skips_setup_when_already_screened_or_disabled(startup, monkeypa
     monkeypatch.setenv("AUTO_SETUP", "0")
     get_settings.cache_clear()
     with session_scope() as s:
-        s.query(ResearchReport).delete()
+        s.query(ScanScore).delete()
         s.commit()
     main.start_scheduler()
     assert started == []

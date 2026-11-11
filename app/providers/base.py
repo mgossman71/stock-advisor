@@ -156,12 +156,13 @@ class Dividend:
 
 @dataclass(frozen=True)
 class UniverseMember:
-    """A symbol belonging to a screening universe (e.g. the S&P 500)."""
+    """A symbol belonging to a screening universe (US-listed scan, S&P 500)."""
 
     symbol: str
     name: str | None = None
     sector: str | None = None
     industry: str | None = None
+    market_cap: Decimal | None = None
 
 
 @dataclass(frozen=True)

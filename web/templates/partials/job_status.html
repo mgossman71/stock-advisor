@@ -8,9 +8,10 @@
   {{ status.done }} / {{ status.total }}
   {% endif %}
   {% if status.name == "first-run setup" %}
-  <p class="muted">Loading the stock list and two years of prices, then researching every stock.
-    Suggestions appear on the Dashboard and Recommendations page when it finishes
-    (usually 10–20 minutes). You can keep using the app meanwhile.</p>
+  <p class="muted">Loading the US stock list (about 3,000 stocks) and a year of prices for each,
+    scanning them all, then fully researching the shortlist. The first run can take an hour or two.
+    Fundamentals fill in over the following week. Suggestions appear on the Dashboard and
+    Recommendations page when it finishes. You can keep using the app meanwhile.</p>
   {% else %}
   <p class="muted">Running in the background — you can leave this page.</p>
   {% endif %}
@@ -30,13 +31,16 @@
   {% endif %}
   {% elif status.name == "screen" %}
   {% set stats = status.result %}
-  <b>Screen done:</b> scored={{ stats.scored }}
+  <b>Screen done:</b> scanned={{ stats.scanned }} · fully researched={{ stats.scored }}
   · skipped (short history)={{ stats.skipped_short_history }}
   · new calls={{ stats.new_recommendations|length }}
   {% else %}
   {% set report = status.result %}
   <b>{{ titles.get(status.name, status.name) }} done.</b>
-  fetched={{ report.fetched|length }} (errors: {{ report.fetch_errors|length }}) ·
+  {% if report.scan %}scanned={{ report.scan.scored }} of {{ report.scan.universe }}
+  (prices refreshed={{ report.scan_fetched }}, fundamentals={{ report.fundamentals_refreshed }},
+  errors={{ report.scan_fetch_errors }}) · shortlist={{ report.scan.shortlist|length }} ·{% endif %}
+  fully fetched={{ report.fetched|length }} (errors: {{ report.fetch_errors|length }}) ·
   scored={{ report.scored }} · new calls={{ report.new_recommendations }} ·
   graded={{ report.graded }} · alerts triggered={{ report.alerts_triggered }}
   {% if report.fetch_errors %}

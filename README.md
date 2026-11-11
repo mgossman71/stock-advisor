@@ -52,9 +52,15 @@ local script — it keeps working even when CDN scripts are blocked.
    back-dated sell needs the shares on *that* date.  The trade form shows the
    live **cost of this trade** (qty × fill price).  Estimates, not tax
    advice; wash sales and prior-year carryforwards not yet handled.
+- **Discovery funnel** — the universe is every NYSE/Nasdaq common stock
+  above the scan floors (market cap ≥ $300M, price ≥ $5, ≥ $1M traded a day:
+  about 3,000 names, small and mid caps included), not a fixed list. Each
+  night every one of them is scan-scored from cheap data (see "Discovery
+  funnel" below). Only the top 25, plus what you hold or watch, get the full
+  research and the AI analyst.
 - **Monitoring** — a nightly job (APScheduler + manual `POST /jobs/refresh`)
-  refreshes prices (universe, watchlist, paper positions, real holdings,
-  open calls), retries pending limits, screens the universe, grades every
+  runs the funnel, refreshes what you hold or watch (watchlist, paper
+  positions, real holdings, open calls), retries pending limits, grades every
   call at 30/90/180 days against `^GSPC`, evaluates alerts and writes the
   daily equity snapshot.  A live quote prices today as a *provisional* bar
   that the next history fetch replaces; it never overwrites a settled bar.
@@ -77,12 +83,13 @@ make test         # pytest, no network, ~1s
 ```
 
 **No data steps needed.** On a fresh database the app sets itself up in the
-background as soon as it starts: it loads the S&P 500 list (`UNIVERSE_SIZE`
-stocks), fetches two years of prices plus fundamentals, news and analyst
-actions, researches every stock and creates the first suggestions. A
-progress bar shows at the top of every page; expect 10–20 minutes for 100
-stocks. If the process stops part-way, the next start resumes (prices
-already fetched are skipped). After that, the nightly job (`NIGHTLY_CRON`)
+background as soon as it starts. It loads the US stock list (about 3,000
+stocks), fetches a year of prices for each plus a first slice of
+fundamentals, scans them all, then fully researches the shortlist and
+creates the first suggestions. A progress bar shows at the top of every
+page; expect an hour or two. Fundamentals for the rest fill in over the
+following week. If the process stops part-way, the next start resumes
+(prices already fetched are skipped). After that, the nightly job (`NIGHTLY_CRON`)
 keeps everything current. The "Refresh prices", "Full refresh" and "Screen
 now" buttons also run in the background, so a reverse proxy's request timeout can't
 kill them.
@@ -90,10 +97,46 @@ kill them.
 **Refresh prices** fetches one live quote per symbol you hold or watch
 (paper positions, real holdings, pending orders, alerts, open calls,
 watchlist, benchmark), then fills limit orders, re-marks positions and
-checks alerts. It takes seconds. **Full refresh** is the whole nightly pass:
-history, fundamentals, news, analyst actions and earnings for the entire
-universe, then a re-screen (one AI-analyst call per stock when "also in the
-nightly screen" is ticked). It takes minutes.
+checks alerts. It takes seconds. **Full refresh** is the whole nightly pass,
+the discovery funnel below. It takes an hour or more, almost all of it the
+politely throttled price history for ~3,000 stocks, and it makes one
+AI-analyst call per *shortlisted* stock when "also in the nightly screen" is
+ticked.
+
+## Discovery funnel (how stocks are found)
+
+The old universe was the first 100 S&P 500 names in alphabetical order (3M
+through Chevron), and no small or mid caps. It is now a three-stage funnel,
+so the whole market is looked at without paying for AI on every stock:
+
+1. **Stock list** (`app/ingestion/universe.py`): one call to Nasdaq's
+   screener returns every NYSE/Nasdaq/AMEX listing. The list keeps common
+   stocks above the floors and drops warrants, preferreds, notes,
+   closed-end funds, SPAC shells and partnership units. It also keeps one
+   share class per company (the most traded). It is rebuilt weekly, and
+   after a floor changes. Fallbacks, in order: the cached
+   `data/us_listed.csv`, the S&P 500, then `SEED_SYMBOLS`. A fallback is
+   only used to bootstrap an empty DB and never shrinks an existing list.
+2. **Scan** (`app/research/scan.py`, table `scan_scores`): every stock gets
+   one history call (about 13 months of bars, skipped when fresh). A
+   rotating slice of fundamentals is refreshed each night (default 400,
+   never-fetched first, then stalest), so everyone's fundamentals are under
+   a week old. Each stock is scored with the same block functions and
+   weights as a full report. There is no news, analyst or earnings data at
+   this stage, so those inputs stay unknown and are never zero. Stocks with
+   fundamentals rank ahead of price-only ones, and under 60 bars is not
+   scored.
+3. **Shortlist**: the top `shortlist` scan scores (default 25), plus
+   everything you hold or watch, get the full fetch (news, analyst actions,
+   earnings, dividends), a full report, and the AI analyst if it is on.
+   Recommendations come only from this stage.
+
+The **Screener** page shows the latest scan: rank, size, sub-scores, ★
+for shortlisted, the full-report verdict where one exists, plus filters
+by sector, size band (small < $2B, mid, large ≥ $10B), held, and shortlist.
+**Settings → Stock discovery** edits the floors, the shortlist size and the
+fundamentals per night, all without a restart. `python -m app.cli scan
+--top 25` prints the ranking from stored data.
 
 **Auto-refresh** (Settings → Auto-refresh, off by default) runs either job,
 prices only by default, every 5 min to 12 h. It can be limited to US
@@ -156,7 +199,11 @@ Copy `.env.example` to `.env`. Nothing secret is ever in code.
 | `NIGHTLY_CRON` | APScheduler cron (UTC) | `15 21 * * *` |
 | `SCHEDULER_ENABLED` | set `0` in one-shot containers | `true` |
 | `AUTO_SETUP` | load universe + prices + screen on a fresh DB at startup (web process only) | `true` |
-| `UNIVERSE_SIZE` | how many S&P 500 stocks the app screens | `100` |
+| `UNIVERSE_SIZE` | optional cap on the universe: keeps the N largest by market cap (unset = all that pass the floors) | unset |
+| `SCAN_MIN_MARKET_CAP` / `SCAN_MIN_PRICE` / `SCAN_MIN_DOLLAR_VOLUME` | default scan floors (the Settings page overrides them) | `300000000` / `5` / `1000000` |
+| `SHORTLIST_SIZE` | default number of scan leaders that get full research + AI | `25` |
+| `SCAN_FUNDAMENTALS_PER_NIGHT` | fundamentals refreshed per night, stalest first | `400` |
+| `UNIVERSE_REFRESH_DAYS` | days between rebuilds of the US stock list | `7` |
 | `SESSION_COOKIE_SECURE` | force the cookie's `Secure` flag (set behind a TLS proxy) | `false` |
 
 ## How the scoring works (exact thresholds)
@@ -204,7 +251,7 @@ use it. The API key is optional and never shown again after saving.
 
 With it on, `LLMAdvisor` (`app/research/llm_advisor.py`) handles the
 research button, `app.cli research`, and (unless unticked) the nightly
-screen:
+screen, which only covers the shortlist plus what you hold or watch:
 
 1. The rules report above is built first and becomes the model's baseline.
 2. The model gets a JSON dossier of *stored* data only: that baseline,

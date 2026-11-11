@@ -25,7 +25,7 @@ make clean-db-docker           # down -v: ALSO deletes the database volume
 make docker-stats              # stats as the container sees them (volume, not ./data)
 make docker-fetch TICKER=MSFT  # one-shot fetch into the container's volume
 
-make test                      # .venv/bin/python -m pytest -q -> 335 tests, <4s, no network
+make test                      # .venv/bin/python -m pytest -q -> 354 tests, no network
 make migrate                   # alembic upgrade head
 rm -f data/stock_advisor.db* && make migrate    # rebuild the local DB from scratch
 bash scripts/bootstrap.sh      # .venv (Python 3.11/3.12), install deps, migrate — idempotent
@@ -175,9 +175,26 @@ the README whenever these change), `test_report.py`/`test_advisor.py`
 - **Two refresh jobs** (`app/jobs.py`): `refresh_prices` (`POST /jobs/prices`)
   only quotes `price_symbols` (held/watched, never screening-only universe
   members) then fills/marks/snapshot/alerts; `run_nightly`
-  (`POST /jobs/refresh`) is the full pass over `target_symbols` (=
-  `price_symbols` + universe + VIX) and the screen. Borrow and dividends stay
-  in the full pass only.
+  (`POST /jobs/refresh`) is the full pass: the discovery funnel, then the
+  full fetch over `target_symbols` (= `price_symbols` + scan shortlist + VIX)
+  and the screen. Borrow and dividends stay in the full pass only.
+- **Discovery funnel** (`app/research/scan.py`, `app/ingestion/universe.py`):
+  the universe is every US-listed common stock above the scan floors (~3,000,
+  Nasdaq screener `api.nasdaq.com/api/screener/stocks`, curl_cffi), not the
+  S&P 500. The old `universe_size=100` sliced Wikipedia's *name-sorted*
+  table (3M..Chevron only); `universe_size` is now an optional cap that keeps
+  the largest by market cap. Universe stocks get history only
+  (`scan_fetch_symbols`) plus a rotating fundamentals slice
+  (`fundamentals_due`), then `run_scan` writes `scan_scores`. Only the top
+  `shortlist_size` + held/watched get `refresh_symbol(with_alternatives)`
+  and `screen_universe` (so the LLM never sees the whole universe).
+  Price-only scores rank after names with fundamentals. Floors/shortlist live
+  in `app_settings` `scan_*` rows (Settings -> Stock discovery); a changed
+  floor clears `universe_refreshed_at` so the list rebuilds on the next full
+  run. Only a live Nasdaq fetch stamps the weekly refresh, and a degraded
+  fallback (S&P/seed) never replaces an existing universe.
+  `needs_first_run` counts *scanned* (not reported) universe members.
+  A local `.env` with `UNIVERSE_SIZE=100` now means "100 largest".
 - **Auto-refresh** (`app/autorefresh.py`): interval re-runs of either job
   (`autorefresh_mode` = `prices` default | `full`), config in `app_settings`
   rows `autorefresh_*` (off by default).

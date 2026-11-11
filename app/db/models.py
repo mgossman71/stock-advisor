@@ -10,6 +10,7 @@ from app.db.models_advice import (
     Recommendation,
     RecommendationOutcome,
     ResearchReport,
+    ScanScore,
     ScoringWeight,
 )
 from app.db.models_market import (
@@ -56,6 +57,7 @@ __all__ = [
     "Recommendation",
     "RecommendationOutcome",
     "ResearchReport",
+    "ScanScore",
     "ScoringWeight",
     "Ticker",
 ]

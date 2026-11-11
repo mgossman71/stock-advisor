@@ -8,12 +8,14 @@ from decimal import Decimal
 from sqlalchemy import (
     JSON,
     Boolean,
+    Date,
     DateTime,
     ForeignKey,
     Index,
     Integer,
     String,
     Text,
+    UniqueConstraint,
     func,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -51,6 +53,41 @@ class ResearchReport(Base):
     recommendations: Mapped[list["Recommendation"]] = relationship(
         back_populates="report", cascade="all, delete-orphan"
     )
+
+
+class ScanScore(Base):
+    """One stock's cheap nightly scan score (no AI, no news/analyst calls).
+
+    The funnel's first stage: every universe member is scored from stored
+    prices + the latest fundamentals snapshot; the top ``shortlist_size``
+    (``rank``) get the full fetch, report and optional LLM review.  ``rank``
+    is NULL for names that could not be scored on enough data.
+    """
+
+    __tablename__ = "scan_scores"
+    __table_args__ = (
+        UniqueConstraint("ticker_id", "scan_date", name="uq_scan_scores_ticker_date"),
+        Index("ix_scan_scores_scan_date_rank", "scan_date", "rank"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    ticker_id: Mapped[int] = mapped_column(
+        ForeignKey("tickers.id", ondelete="CASCADE"), index=True
+    )
+    scan_date: Mapped[dt.date] = mapped_column(Date, nullable=False)
+    #: Weighted composite of the known sub-scores (same weights as reports).
+    score: Mapped[Decimal] = mapped_column(RATIO, nullable=False)
+    #: {"value": "61.20" | null, "momentum": ..., "quality": ..., "sentiment": ..., "risk": ...}
+    sub_scores: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    #: False = price-only score (fundamentals not fetched yet); ranked after
+    #: every name that has them.
+    has_fundamentals: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    rank: Mapped[int | None] = mapped_column(Integer)
+    created_at: Mapped[dt.datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    ticker: Mapped[Ticker] = relationship()
 
 
 class Recommendation(Base):

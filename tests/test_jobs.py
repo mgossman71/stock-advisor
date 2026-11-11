@@ -236,10 +236,51 @@ def test_price_refresh_reports_symbols_without_a_quote(session, settings):
     assert any(e.startswith("GONE:") for e in report.errors)
 
 
-def test_target_symbols_is_price_symbols_plus_universe_and_vix(session, settings):
-    from app.jobs import price_symbols, target_symbols
+def test_full_fetch_targets_held_watched_and_the_shortlist_only(session, settings):
+    """Universe-only stocks get cheap history (scan); the full fetch is for the
+    shortlist + what the user holds/watches + VIX."""
+    from app.db.models import ScanScore
+    from app.jobs import price_symbols, scan_fetch_symbols, target_symbols
 
     _seed(session)
-    ensure_ticker(session, "WATCH", in_watchlist=True)
+    ensure_ticker(session, "WATCH", in_watchlist=True, in_universe=True)
+    ensure_ticker(session, "OTHER", in_universe=True)
     assert price_symbols(session, settings) == ["WATCH", "^SPX"]
+    assert target_symbols(session, settings) == ["WATCH", "^SPX", "^VIX"], "no scan yet"
+    assert scan_fetch_symbols(session, settings) == ["ACME", "OTHER"]
+
+    acme = ensure_ticker(session, "ACME")
+    session.add(ScanScore(ticker_id=acme.id, scan_date=DAY, score=D("70"), rank=1,
+                          sub_scores={}, has_fundamentals=True))
+    session.flush()
     assert target_symbols(session, settings) == ["ACME", "WATCH", "^SPX", "^VIX"]
+
+
+def test_nightly_fetches_alternatives_only_for_the_shortlist(session, settings, monkeypatch):
+    """Only shortlisted (and held/watched) stocks cost news/analyst/earnings calls."""
+    from app.research import scan as scan_module
+
+    _seed(session)
+    for symbol in ("BETA", "GAMMA"):
+        ensure_ticker(session, symbol, in_universe=True)
+    monkeypatch.setattr(scan_module, "MIN_BARS_TO_SCAN", 1)
+
+    class Counting(FakeProvider):
+        def __init__(self):
+            super().__init__(bars=[make_bar("X", DAY - dt.timedelta(days=i), str(100 + i))
+                                   for i in range(5)])
+            self.news_for: list[str] = []
+
+        def get_news(self, symbol, *, asset_class="stock"):
+            self.news_for.append(symbol)
+            return super().get_news(symbol, asset_class=asset_class)
+
+    provider = Counting()
+    from app.research.scan import save_scan_config, load_scan_config
+    from dataclasses import replace
+    save_scan_config(session, replace(load_scan_config(session, settings), shortlist_size=1))
+    report = run_nightly(session, provider, settings=settings, today=DAY,
+                         with_alternatives=True)
+    assert report.scan["scored"] == 3 and len(report.scan["shortlist"]) == 1
+    stocks_with_news = [s for s in provider.news_for if not s.startswith("^")]
+    assert stocks_with_news == report.scan["shortlist"]

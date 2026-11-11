@@ -2,6 +2,7 @@
 
     python -m app.cli fetch AAPL --period 1y
     python -m app.cli fetch-universe --size 60 --with-history
+    python -m app.cli scan --top 25
     python -m app.cli stats
     python -m app.cli providers
     python -m app.cli adjust-cash 500 --withdraw --note "rebalance"
@@ -93,6 +94,41 @@ def cmd_fetch(args: argparse.Namespace) -> int:
                 f"ev_ebitda={fundamentals.ev_ebitda} roe={fundamentals.return_on_equity} "
                 f"d/e={fundamentals.debt_to_equity} target={fundamentals.target_price_consensus}"
             )
+    return 0
+
+
+def cmd_scan(args: argparse.Namespace) -> int:
+    """Discovery scan over stored rows (no network), then print the top N."""
+    from app.db.models import ScanScore, Ticker
+    from app.research.scan import run_scan, universe_info
+
+    with session_scope() as session:
+        info = universe_info(session)
+        print(f"universe: {info.count or '?'} stocks from {info.source or 'unknown'}"
+              f" (refreshed {info.refreshed_at or 'never'})")
+        result = run_scan(session, shortlist_size=args.top)
+        session.commit()
+        print(f"scanned {result.scored} of {result.universe} "
+              f"({result.with_fundamentals} with fundamentals, "
+              f"{result.skipped_short_history} lacking history)")
+        rows = session.execute(
+            select(ScanScore, Ticker).join(Ticker, Ticker.id == ScanScore.ticker_id)
+            .where(ScanScore.scan_date == result.scan_date, ScanScore.rank <= args.top)
+            .order_by(ScanScore.rank)).all()
+        print(f"{'#':>3} {'symbol':7} {'score':>6} {'value':>6} {'mom':>6} {'qual':>6} "
+              f"{'risk':>6} {'mcap $B':>8}  sector")
+        for scan_row, ticker in rows:
+            subs = scan_row.sub_scores
+
+            def cell(name: str) -> str:
+                value = subs.get(name)
+                return f"{float(value):6.1f}" if value is not None else "   n/a"
+
+            cap = f"{float(ticker.market_cap) / 1e9:8.2f}" if ticker.market_cap else "     n/a"
+            print(f"{scan_row.rank:>3} {ticker.symbol:7} {float(scan_row.score):6.1f} "
+                  f"{cell('value')} {cell('momentum')} {cell('quality')} {cell('risk')} "
+                  f"{cap}  {ticker.sector or ''}"
+                  + ("" if scan_row.has_fundamentals else "  (price only)"))
     return 0
 
 
@@ -385,11 +421,17 @@ def build_parser() -> argparse.ArgumentParser:
     fetch.add_argument("--period", default="1y", choices=sorted(PERIOD_DAYS))
     fetch.set_defaults(func=cmd_fetch)
 
-    universe = sub.add_parser("fetch-universe", help="load the S&P 500 universe")
-    universe.add_argument("--size", type=int, default=25)
+    universe = sub.add_parser(
+        "fetch-universe", help="load the US-listed universe (all above the scan floors)")
+    universe.add_argument("--size", type=int, default=None,
+                          help="keep only the N largest by market cap")
     universe.add_argument("--period", default="2y", choices=sorted(PERIOD_DAYS))
     universe.add_argument("--with-history", action="store_true", help="also prime price history")
     universe.set_defaults(func=cmd_fetch_universe)
+
+    scan = sub.add_parser("scan", help="scan-score the universe from stored data, show the top")
+    scan.add_argument("--top", type=int, default=25)
+    scan.set_defaults(func=cmd_scan)
 
     sub.add_parser("stats", help="row counts + coverage + fetch log").set_defaults(func=cmd_stats)
     sub.add_parser("providers", help="show/probe the provider chain").set_defaults(func=cmd_providers)

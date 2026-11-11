@@ -57,7 +57,21 @@ class Settings(BaseSettings):
     # --- universe / benchmark ---------------------------------------------
     benchmark_symbol: str = "^GSPC"
     vix_symbol: str = "^VIX"
-    universe_size: int = Field(default=100, ge=1)
+    #: Optional hard cap on the screening universe (largest by market cap
+    #: kept).  ``None`` = every US-listed stock that passes the scan floors.
+    universe_size: int | None = Field(default=None, ge=1)
+
+    # --- discovery funnel (defaults; the Settings page overrides them) -----
+    #: Scan floors applied when the US-listed stock list is refreshed.
+    scan_min_market_cap: Decimal = Decimal("300000000")
+    scan_min_price: Decimal = Decimal("5")
+    scan_min_dollar_volume: Decimal = Decimal("1000000")
+    #: Top-N scan scores that get the full fetch + report (+ AI) each night.
+    shortlist_size: int = Field(default=25, ge=1, le=500)
+    #: Fundamentals refreshed per night across the scan universe, stalest first.
+    scan_fundamentals_per_night: int = Field(default=400, ge=0, le=5000)
+    #: Days between refreshes of the US-listed stock list.
+    universe_refresh_days: int = Field(default=7, ge=1, le=90)
 
     # --- paper trading -----------------------------------------------------
     initial_cash: Decimal = Decimal("100000")
