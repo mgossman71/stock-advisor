@@ -1,0 +1,18 @@
+# Virtualenv + caches
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+
+# Local database + generated artifacts (the seed CSV under data/ IS tracked)
+data/*.db
+data/*.db-wal
+data/*.shm
+logs/
+
+# Secrets
+.env
+
+# OS
+.DS_Store

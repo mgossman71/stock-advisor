@@ -1,0 +1,16 @@
+[project]
+name = "stock-advisor"
+version = "0.1.0"
+description = "Personal stock advisor + paper-trading simulator (single user, local)."
+requires-python = ">=3.11"
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+addopts = "-q"
+filterwarnings = [
+    "ignore::DeprecationWarning",
+]
+
+[tool.setuptools.packages.find]
+include = ["app*"]

@@ -1,0 +1,207 @@
+"""Command-line entry point for data work (no web server required).
+
+    python -m app.cli fetch AAPL --period 1y
+    python -m app.cli fetch-universe --size 60 --with-history
+    python -m app.cli stats
+    python -m app.cli providers
+"""
+
+from __future__ import annotations
+
+import argparse
+import datetime as dt
+import logging
+import sys
+
+from sqlalchemy import func, select
+
+from app.config import get_settings
+from app.db.base import dispose_all, session_scope
+from app.db.models import (
+    AnalystAction, DataFetchLog, EarningsEvent, Fundamentals, NewsItem,
+    PriceHistory, Ticker,
+)
+from app.ingestion.ingest import refresh_symbol
+from app.ingestion.universe import load_universe, persist_universe
+from app.providers.registry import build_provider, provider_names
+
+PERIOD_DAYS = {"3mo": 92, "6mo": 186, "1y": 365, "2y": 730, "5y": 1826}
+
+
+def _period_to_dates(period: str) -> tuple[dt.date, dt.date]:
+    """Translate a period label into an inclusive (start, end) date range."""
+    end = dt.date.today()
+    if period not in PERIOD_DAYS:
+        raise SystemExit(f"unknown period {period!r}; choose from {sorted(PERIOD_DAYS)}")
+    return end - dt.timedelta(days=PERIOD_DAYS[period]), end
+
+
+def cmd_fetch(args: argparse.Namespace) -> int:
+    """Fetch history + fundamentals (+ news/analysts/earnings) for one symbol."""
+    settings = get_settings()
+    provider = build_provider(settings)
+    start, end = _period_to_dates(args.period)
+    print(f"provider chain: {' -> '.join(provider_names(provider))}")
+    print(f"fetching {args.symbol.upper()} {start.isoformat()}..{end.isoformat()}")
+    with session_scope() as session:
+        outcomes = refresh_symbol(session, provider, args.symbol, start=start, end=end)
+        session.commit()
+        for capability, stats in outcomes.items():
+            print(
+                f"  {capability:16s} fetched={stats.fetched:<5d} written={stats.written:<5d} "
+                f"skipped={stats.skipped:<5d} {'; '.join(stats.notes)}"
+            )
+        symbol = args.symbol.upper()
+        ticker = session.scalar(select(Ticker).where(Ticker.symbol == symbol))
+        if ticker is None:
+            print("ticker row was not created")
+            return 1
+        bars = session.scalar(
+            select(func.count(PriceHistory.id)).where(PriceHistory.ticker_id == ticker.id)
+        )
+        bounds = session.execute(
+            select(func.min(PriceHistory.date), func.max(PriceHistory.date)).where(
+                PriceHistory.ticker_id == ticker.id
+            )
+        ).one()
+        sources = list(session.scalars(
+            select(PriceHistory.source).where(PriceHistory.ticker_id == ticker.id).distinct()
+        ))
+        print(f"\nticker {ticker.symbol}: {bars} bars, {bounds[0]} .. {bounds[1]}, sources={sources}")
+        fundamentals = session.scalar(
+            select(Fundamentals).where(Fundamentals.ticker_id == ticker.id)
+            .order_by(Fundamentals.as_of_date.desc())
+        )
+        if fundamentals:
+            print(
+                f"fundamentals as of {fundamentals.as_of_date} (source={fundamentals.source}): "
+                f"pe_trailing={fundamentals.pe_trailing} pe_forward={fundamentals.pe_forward} "
+                f"ev_ebitda={fundamentals.ev_ebitda} roe={fundamentals.return_on_equity} "
+                f"d/e={fundamentals.debt_to_equity} target={fundamentals.target_price_consensus}"
+            )
+    return 0
+
+
+def cmd_fetch_universe(args: argparse.Namespace) -> int:
+    """Load the screening universe and (optionally) prime its price history."""
+    settings = get_settings()
+    result = load_universe(settings, limit=args.size)
+    print(f"universe source={result.source} members={len(result.members)}")
+    for note in result.notes:
+        print(f"  note: {note}")
+    if not args.with_history:
+        with session_scope() as session:
+            print(f"persisted {persist_universe(session, result.members)} tickers")
+            session.commit()
+        return 0
+
+    provider = build_provider(settings)
+    start, end = _period_to_dates(args.period)
+    with session_scope() as session:
+        print(f"persisted {persist_universe(session, result.members)} tickers")
+        session.commit()
+        for index, member in enumerate(result.members, start=1):
+            outcomes = refresh_symbol(
+                session, provider, member.symbol, start=start, end=end, with_alternatives=False
+            )
+            session.commit()
+            history = outcomes["history"]
+            print(
+                f"  [{index}/{len(result.members)}] {member.symbol:7s} "
+                f"bars+{history.written:<4d} skip={history.skipped:<4d} {'; '.join(history.notes)}"
+            )
+    return 0
+
+
+def cmd_stats(_: argparse.Namespace) -> int:
+    """Row counts per table, price coverage, and recent fetch-log entries."""
+    tables = {
+        "tickers": Ticker, "price_history": PriceHistory, "fundamentals": Fundamentals,
+        "news_items": NewsItem, "analyst_actions": AnalystAction,
+        "earnings_events": EarningsEvent, "data_fetch_log": DataFetchLog,
+    }
+    with session_scope() as session:
+        print("table row counts")
+        for name, model in tables.items():
+            print(f"  {name:18s} {session.scalar(select(func.count()).select_from(model))}")
+        print("\nprice coverage")
+        rows = session.execute(
+            select(
+                Ticker.symbol, func.count(PriceHistory.id),
+                func.min(PriceHistory.date), func.max(PriceHistory.date),
+            )
+            .join(PriceHistory, PriceHistory.ticker_id == Ticker.id)
+            .group_by(Ticker.symbol)
+            .order_by(Ticker.symbol)
+        ).all()
+        for symbol, count, low, high in rows:
+            print(f"  {symbol:7s} {count:5d} bars  {low} .. {high}")
+        print("\nlast 8 fetch-log entries")
+        for entry in session.scalars(
+            select(DataFetchLog).order_by(DataFetchLog.id.desc()).limit(8)
+        ):
+            print(
+                f"  {entry.fetched_at:%Y-%m-%d %H:%M:%S} {entry.provider:9s} "
+                f"{entry.endpoint:30s} {entry.status:13s} rows={entry.row_count} "
+                f"{entry.error or ''}"
+            )
+    return 0
+
+
+def cmd_providers(_: argparse.Namespace) -> int:
+    """Show the configured provider chain and probe history for two symbols."""
+    settings = get_settings()
+    provider = build_provider(settings)
+    print(f"MARKET_DATA_PROVIDER={settings.market_data_provider}")
+    print(f"providers: {' -> '.join(provider_names(provider))}")
+    print(f"min interval between calls per host: {settings.min_provider_interval_seconds}s")
+    print(f"max retries: {settings.max_retries}")
+    end = dt.date.today()
+    start = end - dt.timedelta(days=92)
+    for symbol in ("AAPL", settings.benchmark_symbol):
+        result = provider.get_history(symbol, start, end)
+        print(f"  probe {symbol:7s} {result.summary()}")
+        if result.ok:
+            last = result.data[-1]
+            print(f"    last bar {last.date} close={last.close} source={last.source}")
+    return 0
+
+
+def build_parser() -> argparse.ArgumentParser:
+    """Assemble the argparse tree."""
+    parser = argparse.ArgumentParser(prog="app.cli", description="Stock advisor data tools")
+    parser.add_argument("-v", "--verbose", action="store_true", help="debug logging")
+    sub = parser.add_subparsers(dest="command", required=True)
+
+    fetch = sub.add_parser("fetch", help="fetch one symbol end to end")
+    fetch.add_argument("symbol")
+    fetch.add_argument("--period", default="1y", choices=sorted(PERIOD_DAYS))
+    fetch.set_defaults(func=cmd_fetch)
+
+    universe = sub.add_parser("fetch-universe", help="load the S&P 500 universe")
+    universe.add_argument("--size", type=int, default=25)
+    universe.add_argument("--period", default="2y", choices=sorted(PERIOD_DAYS))
+    universe.add_argument("--with-history", action="store_true", help="also prime price history")
+    universe.set_defaults(func=cmd_fetch_universe)
+
+    sub.add_parser("stats", help="row counts + coverage + fetch log").set_defaults(func=cmd_stats)
+    sub.add_parser("providers", help="show/probe the provider chain").set_defaults(func=cmd_providers)
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    """CLI entry point."""
+    args = build_parser().parse_args(argv)
+    logging.basicConfig(
+        level=logging.DEBUG if args.verbose else logging.WARNING,
+        format="%(levelname)s %(name)s: %(message)s",
+    )
+    try:
+        return args.func(args)
+    finally:
+        dispose_all()
+
+
+if __name__ == "__main__":
+    sys.exit(main())
+
