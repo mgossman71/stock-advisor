@@ -59,6 +59,21 @@
       (currently {{ env_summary.initial_cash_env }}).
       {% if has_orders %}It cannot be changed after trading has begun.{% endif %}</p>
   </div>
+  <div class="panel" id="password">
+    <h2>Login password</h2>
+    {% if pw_message %}<p class="{{ 'flash-ok' if pw_message[0] else 'flash-bad' }}">{{ pw_message[1] }}</p>{% endif %}
+    <form method="post" action="/settings/password" class="inline">
+      <label>current <input type="password" name="current" autocomplete="current-password"
+        required style="width:11rem"></label>
+      <label>new <input type="password" name="password" autocomplete="new-password"
+        minlength="{{ min_password_length }}" required style="width:11rem"></label>
+      <label>repeat <input type="password" name="confirm" autocomplete="new-password"
+        minlength="{{ min_password_length }}" required style="width:11rem"></label>
+      <button class="btn" type="submit">Change password</button>
+    </form>
+    <p class="muted">At least {{ min_password_length }} characters. Changing it signs out every
+      other browser; this one stays signed in.</p>
+  </div>
   <div class="panel">
     <h2>Environment (read-only)</h2>
     <table>

@@ -82,12 +82,69 @@ def test_throttle_window():
 
 # ---------------------------------------------------------------- the app
 
+def test_may_bootstrap_only_direct_local_requests():
+    assert auth.may_bootstrap("127.0.0.1", {})
+    assert auth.may_bootstrap("192.168.1.20", {})
+    assert auth.may_bootstrap("::1", {})
+    assert not auth.may_bootstrap("8.8.8.8", {})
+    # A tunnel/proxy connects from loopback but forwards internet clients.
+    assert not auth.may_bootstrap("127.0.0.1", {"x-forwarded-for": "8.8.8.8"})
+    assert not auth.may_bootstrap("127.0.0.1", {"cf-connecting-ip": "8.8.8.8"})
+    assert not auth.may_bootstrap(None, {})
+
+
 def test_fails_closed_without_a_password(anon):
     resp = anon.get("/", follow_redirects=False)
     assert resp.status_code == 303 and resp.headers["location"] == "/login?next=/"
-    page = anon.get("/login").text
-    assert "No password is set" in page and "app.cli set-password" in page
     assert _login(anon, "anything at all").status_code == 503
+    # Through a proxy: no setup form, only the CLI instructions.
+    page = anon.get("/login", headers={"X-Forwarded-For": "8.8.8.8"}).text
+    assert "No password is set" in page and "app.cli set-password" in page
+    assert 'action="/setup"' not in page
+    refused = anon.post("/setup", data={"password": PASSWORD, "confirm": PASSWORD},
+                        headers={"X-Forwarded-For": "8.8.8.8"})
+    assert refused.status_code == 403
+    assert anon.get("/", follow_redirects=False).status_code == 303  # still locked
+
+
+def test_first_run_setup_from_the_browser(anon):
+    page = anon.get("/login").text
+    assert "Create your password" in page and 'action="/setup"' in page
+    bad = anon.post("/setup", data={"password": PASSWORD, "confirm": "different!!!!"})
+    assert bad.status_code == 400 and "do not match" in bad.text
+    short = anon.post("/setup", data={"password": "short", "confirm": "short"})
+    assert short.status_code == 400 and "at least 12" in short.text
+    resp = anon.post("/setup", data={"password": PASSWORD, "confirm": PASSWORD},
+                     follow_redirects=False)
+    assert resp.status_code == 303 and auth.COOKIE_NAME in resp.headers["set-cookie"]
+    assert anon.get("/", follow_redirects=False).status_code == 200  # signed in
+    # Setup is one-shot: it can't overwrite an existing password.
+    again = anon.post("/setup", data={"password": "attacker passphrase",
+                                      "confirm": "attacker passphrase"})
+    assert again.status_code == 409
+    assert "Sign in" in anon.get("/login").text
+
+
+def test_change_password_on_settings_page(anon):
+    _set()
+    _login(anon)
+    html = anon.get("/settings").text
+    assert 'action="/settings/password"' in html and "Sign out" in html
+    wrong = anon.post("/settings/password", follow_redirects=False,
+                      data={"current": "nope", "password": "x" * 12, "confirm": "x" * 12})
+    assert wrong.headers["location"].startswith("/settings?pw=wrong")
+    assert "Current password is wrong" in anon.get("/settings?pw=wrong").text
+    mismatch = anon.post("/settings/password", follow_redirects=False,
+                         data={"current": PASSWORD, "password": "x" * 12, "confirm": "y" * 12})
+    assert mismatch.headers["location"].startswith("/settings?pw=mismatch")
+    ok = anon.post("/settings/password", follow_redirects=False,
+                   data={"current": PASSWORD, "password": "new passphrase!",
+                         "confirm": "new passphrase!"})
+    assert ok.headers["location"].startswith("/settings?pw=changed")
+    assert anon.get("/settings", follow_redirects=False).status_code == 200  # still in
+    anon.post("/logout")
+    assert _login(anon).status_code == 401
+    assert _login(anon, "new passphrase!").status_code == 303
 
 
 def test_every_route_but_login_health_static_is_locked(anon):

@@ -7,8 +7,11 @@ Standard library only.  State lives in ``app_settings``:
   rotated on every password change, which logs out every existing session.
 
 Fails closed: with no password set, every protected route redirects to the
-login page, which explains how to set one (``python -m app.cli set-password``).
-There is deliberately no "auth off" switch - the app is meant to be exposed.
+login page.  There it can be created from the browser, but only by a direct
+local/LAN request (``may_bootstrap``); otherwise the page points at
+``python -m app.cli set-password``.  It can be changed later on the Settings
+page.  There is deliberately no "auth off" switch - the app is meant to be
+exposed.
 """
 
 from __future__ import annotations
@@ -18,6 +21,7 @@ import collections
 import datetime as dt
 import hashlib
 import hmac
+import ipaddress
 import secrets
 import threading
 import time
@@ -110,6 +114,30 @@ def check_token(token: str | None, secret: str | None, *, now: float | None = No
 def _sign(secret: str, body: str) -> str:
     mac = hmac.new(secret.encode(), body.encode(), hashlib.sha256).digest()
     return base64.urlsafe_b64encode(mac).decode().rstrip("=")
+
+
+#: Headers a reverse proxy / tunnel adds.  Their presence means the request
+#: may have come from the internet, whatever the socket peer looks like.
+_PROXY_HEADERS = ("x-forwarded-for", "forwarded", "x-real-ip", "cf-connecting-ip",
+                  "true-client-ip")
+
+
+def may_bootstrap(peer: str | None, headers) -> bool:
+    """May this request set the *first* password from the browser?
+
+    Only direct requests from this machine or the local network: a peer on a
+    loopback/private address with no proxy-forwarding headers.  A tunnel or
+    reverse proxy (cloudflared, Caddy) also connects from a local address,
+    but it adds ``X-Forwarded-For``, so internet visitors can never claim an
+    unconfigured app.
+    """
+    if not peer or any(h in headers for h in _PROXY_HEADERS):
+        return False
+    try:
+        address = ipaddress.ip_address(peer)
+    except ValueError:
+        return peer == "testclient"  # Starlette's TestClient peer name
+    return address.is_loopback or address.is_private
 
 
 def safe_next(target: str | None) -> str:

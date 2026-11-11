@@ -73,21 +73,28 @@ make dev          # venv -> deps -> migrate -> seed (real data) -> serve on :900
 # or the container stack (DB in a named volume, NOT ./data):
 make up           # docker compose up -d --build -> http://localhost:9000
 make test         # pytest, no network, ~1s
-make set-password # (or `make docker-set-password`) - required, see below
+# then open the app: it asks you to create a password on first visit
 ```
 
 ### Password protection
 
-Every page and API needs a login except `/login`, `/healthz` and
-`/static/`. Until a password is set the app is **locked**: it shows only the
-login page with instructions. Set one (12+ characters):
+Login is always on. Every page and API needs it except `/login`, `/setup`,
+`/healthz` and `/static/`. Until a password exists the app is **locked**.
 
-```bash
-make set-password            # local DB  (.venv/bin/python -m app.cli set-password)
-make docker-set-password     # container (docker compose exec app python -m app.cli set-password)
-```
+- **First run:** open the app and the login page asks you to create a
+  password (12+ characters). That form only appears for direct requests from
+  this machine or the local network. Anything arriving through a reverse
+  proxy or tunnel (it carries `X-Forwarded-For`) gets CLI instructions
+  instead, so internet visitors can't claim a fresh install.
+- **Change it** under Settings → Login password. That signs out every other
+  browser.
+- **CLI fallback** (also the reset path if you forget it):
+  `make set-password`, or `make docker-set-password` for the container.
 
-Re-running it changes the password and signs out every existing session.
+Set the password **before** exposing the app. Under Docker Desktop every
+connection reaches the container from the VM gateway (`192.168.65.1`), so a
+router port-forward straight to port 9000 would look local, and a fresh
+install would offer setup to whoever arrives first.
 The password is stored as a salted scrypt hash in `app_settings`; the session
 is an HMAC-signed, `HttpOnly`, `SameSite=Lax` cookie valid for 14 days ("Sign
 out" in the top bar ends it). After 10 failed logins in 15 minutes, logins

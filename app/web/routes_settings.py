@@ -8,6 +8,7 @@ from decimal import Decimal, InvalidOperation
 from fastapi import APIRouter, Form, Request
 from fastapi.responses import RedirectResponse
 
+from app.auth import MIN_PASSWORD_LENGTH
 from app.config import get_settings
 from app.db.base import session_scope
 from app.db.models import AppSetting, Order, ScoringWeight
@@ -21,9 +22,18 @@ router = APIRouter()
 
 EDITABLE_KEYS = ("alert_default_drawdown_pct", "alert_default_earnings_within_days")
 
+#: ``?pw=`` result codes from ``POST /settings/password`` -> (ok, message).
+PASSWORD_MESSAGES = {
+    "changed": (True, "Password changed. Every other session has been signed out."),
+    "wrong": (False, "Current password is wrong."),
+    "mismatch": (False, "The new passwords do not match."),
+    "short": (False, "The new password is too short."),
+    "locked": (False, "Too many failed attempts. Try again in 15 minutes."),
+}
+
 
 @router.get("/settings")
-def settings_page(request: Request):
+def settings_page(request: Request, pw: str = ""):
     settings = get_settings()
     with session_scope() as session:
         ensure_default_weights(session)
@@ -36,6 +46,8 @@ def settings_page(request: Request):
         context={"disclaimer": DISCLAIMER, "weights": weights,
                  "app_settings": app_settings, "settings": settings,
                  "has_orders": has_orders, "llm": llm,
+                 "pw_message": PASSWORD_MESSAGES.get(pw),
+                 "min_password_length": MIN_PASSWORD_LENGTH,
                  "env_summary": {
                      "database": str(settings.db_path or settings.database_url),
                      "provider": settings.market_data_provider,

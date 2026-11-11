@@ -65,12 +65,12 @@ async def same_origin_writes(request: Request, call_next):
     return await call_next(request)
 
 
-_PUBLIC_PATHS = {"/login", "/healthz"}
+_PUBLIC_PATHS = {"/login", "/setup", "/healthz"}
 
 
 @app.middleware("http")
 async def require_login(request: Request, call_next):
-    """Every route needs a valid session cookie except login, healthz, static.
+    """Every route needs a valid session cookie except login/setup, healthz, static.
 
     Registered after ``same_origin_writes`` so it runs first.  Fails closed:
     no password set -> nothing but the login page (which says how to set one).

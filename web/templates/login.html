@@ -12,7 +12,7 @@
   <main>
     <div class="panels">
       <div class="panel">
-        <h2>Sign in</h2>
+        <h2>{{ "Sign in" if configured else "Create your password" }}</h2>
         {% if error %}<p class="flash-bad">{{ error }}</p>{% endif %}
         {% if configured %}
         <form method="post" action="/login" class="inline">
@@ -21,9 +21,20 @@
             autofocus required></label>
           <button class="btn" type="submit">Sign in</button>
         </form>
+        {% elif can_setup %}
+        <p class="muted">First run: the app stays locked until you choose a password
+          (at least {{ min_length }} characters). You can change it later under Settings.</p>
+        <form method="post" action="/setup" class="inline">
+          <label>password <input type="password" name="password" autocomplete="new-password"
+            minlength="{{ min_length }}" autofocus required></label>
+          <label>repeat <input type="password" name="confirm" autocomplete="new-password"
+            minlength="{{ min_length }}" required></label>
+          <button class="btn" type="submit">Set password &amp; sign in</button>
+        </form>
         {% else %}
-        <p>No password is set, so the app is locked. Set one on the server
-          (at least {{ min_length }} characters):</p>
+        <p>No password is set, so the app is locked. For safety the first password
+          can only be created from this machine or your local network, or on the
+          server (at least {{ min_length }} characters):</p>
         <p class="mono">.venv/bin/python -m app.cli set-password</p>
         <p class="mono">docker compose exec app python -m app.cli set-password</p>
         {% endif %}

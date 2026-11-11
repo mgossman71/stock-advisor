@@ -39,7 +39,7 @@ bash scripts/bootstrap.sh      # .venv (Python 3.11/3.12), install deps, migrate
 .venv/bin/python -m app.cli adjust-cash 500 [--withdraw] [--note ...]  # cash in/out, not a trade
 .venv/bin/python -m app.cli record-buy AAPL 10 210.50 [--date --rec N --commission --note]  # real trade
 .venv/bin/python -m app.cli record-sell ... # same args; sells cannot exceed the real ledger
-.venv/bin/python -m app.cli set-password               # web login (required; stdin ok)
+.venv/bin/python -m app.cli set-password               # web login fallback/reset (stdin ok)
 .venv/bin/python -m app.cli holdings                   # real lots + gain/loss + est tax
 .venv/bin/python -m app.cli portfolio                  # marks + day snapshot
 ```
@@ -147,10 +147,14 @@ the README whenever these change), `test_report.py`/`test_advisor.py`
   `payload.llm_error`. `seed_demo` deliberately stays on `RuleBasedAdvisor`.
   Tests inject a fake client; `test_llm_advisor.py` pins the guards.
 - **Password login** (`app/auth.py`, `require_login` in `app/main.py`): every
-  route except `/login`, `/healthz`, `/static/` needs the `sa_session` cookie.
-  Fails closed - no password set means locked, and there is deliberately no
-  auth-off switch (the app is internet-facing on `0.0.0.0:9000`). Hash and
-  session secret live in `app_settings`; `set-password` rotates the secret.
+  route except `/login`, `/setup`, `/healthz`, `/static/` needs the
+  `sa_session` cookie. Fails closed - no password set means locked, and there
+  is deliberately no auth-off switch (the app is internet-facing on
+  `0.0.0.0:9000`). First-run `/setup` is browser-based but only for
+  `may_bootstrap` peers (loopback/private, no proxy headers); under Docker
+  Desktop every peer is `192.168.65.1`, so that guard can't tell a direct
+  port-forward from the LAN. Hash and session secret live in `app_settings`;
+  any password change rotates the secret.
   The login throttle keys on the socket peer, never `X-Forwarded-For`. Web
   tests' `client` fixture signs in; `tests/test_auth.py` uses a signed-out one.
 - **Writes refuse cross-site requests** (`same_origin_writes` in
