@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Stock Advisor{% endblock %}</title>
+  <script src="https://unpkg.com/htmx.org@1.9.12"></script>
+  <script defer src="https://unpkg.com/alpinejs@3.14.1/dist/cdn.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+  <link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+  <header class="topbar">
+    <span class="brand">Stock&nbsp;Advisor</span>
+    <nav>
+      <a href="/" class="{{ 'active' if nav == 'dashboard' }}">Dashboard</a>
+      <a href="/research" class="{{ 'active' if nav == 'research' }}">Research</a>
+      <a href="/screen" class="{{ 'active' if nav == 'screen' }}">Screen</a>
+      <a href="/portfolio" class="{{ 'active' if nav == 'portfolio' }}">Portfolio</a>
+      <a href="/recommendations" class="{{ 'active' if nav == 'recommendations' }}">Recommendations</a>
+      <a href="/alerts" class="{{ 'active' if nav == 'alerts' }}">Alerts
+        {% if alert_badge %}<span class="badge">{{ alert_badge }}</span>{% endif %}</a>
+      <a href="/settings" class="{{ 'active' if nav == 'settings' }}">Settings</a>
+    </nav>
+    <form hx-post="/jobs/refresh" hx-target="#job-result" hx-swap="innerHTML" class="jobform">
+      <button type="submit" class="btn secondary">Run refresh job</button>
+    </form>
+  </header>
+  <div class="disclaimer" role="note">{{ disclaimer }}</div>
+  <div id="job-result"></div>
+  <main>
+    {% block content %}{% endblock %}
+  </main>
+  <footer>
+    data as of {{ data_as_of|as_of if data_as_of is defined and data_as_of else 'see page timestamps' }}
+    &middot; all prices shown with their own as-of stamp
+  </footer>
+</body>
+</html>

@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+{% set nav = "screen" %}
+{% block title %}Screener — Stock Advisor{% endblock %}
+{% block content %}
+<h1>Screener</h1>
+<form class="inline" method="get" action="/screen">
+  <input name="q" placeholder="symbol…" value="{{ q or '' }}">
+  <select name="sector">
+    <option value="">all sectors</option>
+    {% for s in sectors %}<option value="{{ s }}" {{ 'selected' if s == sector }}>{{ s }}</option>{% endfor %}
+  </select>
+  <button class="btn" type="submit">Filter</button>
+  <button class="btn secondary" hx-post="/screen/run" hx-target="#screen-result"
+          hx-swap="innerHTML" type="button">Screen now (score stored data)</button>
+</form>
+<div id="screen-result"></div>
+
+<div class="panel" style="margin-top:1rem"
+     x-data="{ key: 'score', dir: -1,
+               sort(rows){ rows.sort((a,b)=> (a.dataset[key]===''?-1e9:+a.dataset[key]) - (b.dataset[key]===''?-1e9:+b.dataset[key]) ); return rows } }">
+  <table id="screener">
+    <thead>
+      <tr>
+        <th @click="key='symbol'">Symbol</th><th class="muted">Sector</th>
+        <th class="num" @click="key='score'">Score</th>
+        <th class="num" @click="key='value'">Value</th>
+        <th class="num" @click="key='momentum'">Momentum</th>
+        <th class="num" @click="key='quality'">Quality</th>
+        <th class="num" @click="key='sentiment'">Sentiment</th>
+        <th class="num" @click="key='risk'">Risk</th>
+        <th>Stance</th><th>Scored</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in rows %}
+      <tr :class="key" data-symbol="{{ row.ticker.symbol }}"
+          data-score="{{ row.score if row.score is not none else '' }}"
+          data-value="{{ row.subs.value if row.subs.value is not none else '' }}"
+          data-momentum="{{ row.subs.momentum if row.subs.momentum is not none else '' }}"
+          data-quality="{{ row.subs.quality if row.subs.quality is not none else '' }}"
+          data-sentiment="{{ row.subs.sentiment if row.subs.sentiment is not none else '' }}"
+          data-risk="{{ row.subs.risk if row.subs.risk is not none else '' }}">
+        <td><a href="/research/{{ row.ticker.symbol }}">{{ row.ticker.symbol }}</a></td>
+        <td class="muted">{{ row.ticker.sector or "—" }}</td>
+        <td class="num mono">{{ row.score if row.score is not none else "—" }}</td>
+        {% for block in ['value','momentum','quality','sentiment','risk'] %}
+        <td class="num mono muted">{{ row.subs.get(block) if row.subs.get(block) is not none else "n/a" }}</td>
+        {% endfor %}
+        <td class="{{ row.stance or 'muted' }}">{{ row.stance or "not scored" }}</td>
+        <td class="muted">{{ row.created_at|as_of if row.created_at else "—" }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}

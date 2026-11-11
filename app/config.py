@@ -71,7 +71,7 @@ class Settings(BaseSettings):
     # --- demo seed ---------------------------------------------------------
     seed_symbols: str = (
         "AAPL,MSFT,NVDA,AMZN,GOOGL,META,NFLX,TSLA,JPM,XOM,"
-        "UNH,PG,KO,LRCV,CAT,DE,AMD,DIS,NKE"
+        "UNH,PG,KO,HD,CAT,DE,AMD,DIS,NKE"
     )
     seed_history_years: int = Field(default=2, ge=1, le=10)
 

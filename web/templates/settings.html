@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% set nav = "settings" %}
+{% block title %}Settings — Stock Advisor{% endblock %}
+{% block content %}
+<h1>Settings</h1>
+<div class="panels">
+  <div class="panel">
+    <h2>Scoring weights <span class="muted">(must sum to 1.0; used by every future report)</span></h2>
+    <form method="post" action="/settings/weights" class="inline">
+      {% for w in weights %}
+      <label>{{ w.name }} <input name="weight_{{ w.name }}" value="{{ w.weight }}" style="width:5rem"></label>
+      {% endfor %}
+      <button class="btn" type="submit">Save weights</button>
+    </form>
+    <p class="muted">Invalid weight sets are ignored (nothing is saved).</p>
+  </div>
+  <div class="panel">
+    <h2>Alert defaults</h2>
+    <form method="post" action="/settings/defaults" class="inline">
+      <label>drawdown % <input name="alert_default_drawdown_pct"
+        value="{{ app_settings.get('alert_default_drawdown_pct', '10') }}" style="width:5rem"></label>
+      <label>earnings within (days) <input name="alert_default_earnings_within_days"
+        value="{{ app_settings.get('alert_default_earnings_within_days', '14') }}" style="width:5rem"></label>
+      <button class="btn" type="submit">Save</button>
+    </form>
+    <p class="muted">Starting cash comes from <code>INITIAL_CASH</code> in <code>.env</code>
+      (currently {{ env_summary.initial_cash_env }}).
+      {% if has_orders %}It cannot be changed after trading has begun.{% endif %}</p>
+  </div>
+  <div class="panel">
+    <h2>Environment (read-only)</h2>
+    <table>
+      {% for k, v in env_summary.items() %}{% if k != 'keys' %}
+      <tr><td class="muted">{{ k }}</td><td>{{ v }}</td></tr>{% endif %}{% endfor %}
+      <tr><td class="muted">provider keys present</td>
+          <td>{{ env_summary.keys }}</td></tr>
+    </table>
+    <p class="muted">Keys live in <code>.env</code>; never in code. Values are not shown.</p>
+  </div>
+</div>
+{% endblock %}

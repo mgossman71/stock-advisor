@@ -1,40 +1,40 @@
 # stock-advisor — agent notes
 
 Personal stock research + paper-trading app. FastAPI / Jinja2 / HTMX / SQLite.
-**Phases 2–6 of the plan in `stock-advisor-agent-prompt.md` are not built yet** — the
-trading core, scoring, recommendations, backtesting, web UI and dashboard are all
-still to come. Do not assume a module exists; check the tree.
+All six build phases are implemented: data layer, paper-trading core, research
+engine, screener/recommendations, full web UI + scheduler, seed script + README.
+The `AdvisorEngine` protocol (`app/research/engine.py`) is the seam where an
+LLM-based advisor replaces `RuleBasedAdvisor` later.
 
-What exists so far: config, DB models + Alembic, provider layer, ingestion, universe
-loading, the `python -m app.cli` entry point, and `app/main.py` — a read-only status
-page plus `/healthz` for the container healthcheck. The real UI (HTMX pages, charts,
-portfolio screens) is still Phase 5.
+What exists: config, DB models + Alembic, provider layer (yfinance -> nasdaq ->
+fred fallback chain), ingestion, universe loading, `python -m app.cli`
+(fetch/research/trade/portfolio/stats), `app/trading/` (orders, positions,
+P&L, sizing, snapshots), `app/research/` (indicators, scoring, report, engine,
+screener, outcomes), `app/jobs.py` (the nightly pipeline + alerts), and
+`app/web/` (all pages + `POST /jobs/refresh`).
 
 ## Commands
 
 ```bash
+make dev                       # bootstrap -> seed (REAL data, slow once) -> uvicorn :8000
 make up                        # docker compose up -d --build -> http://localhost:8000
 make down                      # stop the stack
 make clean-db-docker           # down -v: ALSO deletes the database volume
 make docker-stats              # stats as the container sees them (volume, not ./data)
 make docker-fetch TICKER=MSFT  # one-shot fetch into the container's volume
 
-make test                      # .venv/bin/python -m pytest -q  -> 117 tests, <1s, no network
+make test                      # .venv/bin/python -m pytest -q -> 173 tests, <2s, no network
 make migrate                   # alembic upgrade head
 rm -f data/stock_advisor.db* && make migrate    # rebuild the local DB from scratch
 bash scripts/bootstrap.sh      # .venv (Python 3.11/3.12), install deps, migrate — idempotent
+.venv/bin/python -m scripts.seed_demo   # seed real history for SEED_SYMBOLS (idempotent)
 
-.venv/bin/python -m uvicorn app.main:app --host 127.0.0.1 --port 8000    # serve locally
-.venv/bin/python -m app.cli providers                # which sources are reachable
-.venv/bin/python -m app.cli fetch-universe           # seed tickers only (--force = + fundamentals, slow)
-.venv/bin/python -m app.cli fetch AAPL --period 1y   # history, fundamentals, news, analysts, earnings
-.venv/bin/python -m app.cli stats                    # row counts + coverage + fetch log
+.venv/bin/python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
+.venv/bin/python -m app.cli providers / stats / fetch AAPL --period 1y
+.venv/bin/python -m app.cli research AAPL [--refresh]   # full report + calls
+.venv/bin/python -m app.cli trade buy AAPL 10 [--fetch] # paper order
+.venv/bin/python -m app.cli portfolio                  # marks + day snapshot
 ```
-
-`make dev` and `run.sh` both still fail: they call `python -m scripts.seed_demo`, which
-is Phase 6 and does not exist yet. There is no `make lint` target (ruff is not
-installed). There is no package `__main__.py`, so `python -m app` fails — it is
-`python -m app.cli`.
 
 Table names (get these right): `tickers`, `price_history`, `fundamentals`,
 `news_items`, `analyst_actions`, `earnings_events`, `data_fetch_log`, plus the
@@ -46,7 +46,11 @@ trading/advice tables declared in the models but not exercised yet.
 migration's columns against the model metadata — the guard against the bug in
 "Schema changes" below. `test_normalize.py` pins fraction-vs-percent-point unit
 decisions, `test_throttle.py` proves retry/backoff without sleeping,
-`test_ingest_*.py` prove idempotency and no-fabrication.
+`test_ingest_*.py` prove idempotency and no-fabrication. New suites pin the
+business rules: `test_pnl_math.py`/`test_orders.py`/`test_snapshots.py`
+(the exact P&L + short-equity math), `test_scoring.py` (thresholds — change
+the README whenever these change), `test_report.py`/`test_advisor.py`
+(no-fabrication + when calls fire), `test_outcomes.py` (30d alpha fixtures).
 
 ## Gotchas
 
@@ -99,3 +103,12 @@ decisions, `test_throttle.py` proves retry/backoff without sleeping,
   read on the session's own connection (`sqlite_master` / `information_schema`).
 - `data/stock_advisor.db*` is git-ignored — delete it and `make migrate` for a clean rebuild.
 - A real `.env` may hold `FRED_API_KEY`; never print its value.
+- **Scheduler ownership:** the app container arms APScheduler (nightly cron);
+  one-shot containers (`ingest`) must set `SCHEDULER_ENABLED=0` or two
+  processes race the same SQLite volume. `POST /jobs/refresh` is the manual
+  trigger and is idempotent — short-borrow accrual is gated once per calendar
+  day by a `data_fetch_log` row (`provider='system'`, `endpoint='short_borrow'`).
+- **Web routes use `session_scope()` directly**; expire_on_commit is False so
+  ORM objects stay readable after commit, but lazy relationships must be
+  touched *inside* the scope before rendering. HTMX full-page actions return
+  an `HX-Redirect` header, plain forms return 303s.

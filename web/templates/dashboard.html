@@ -1,0 +1,108 @@
+{% extends "base.html" %}
+{% set nav = "dashboard" %}
+{% block title %}Dashboard — Stock Advisor{% endblock %}
+{% block content %}
+<div class="panels">
+  <div class="panel">
+    <h2>Account</h2>
+    <div style="display:flex; gap:1.5rem; flex-wrap:wrap">
+      <div class="kpi">{{ values.total_value|money }}<small>total equity</small></div>
+      <div class="kpi">{{ values.cash|money }}<small>cash</small></div>
+      <div class="kpi">{{ values.positions_value|money }}<small>positions value</small></div>
+      <div class="kpi">{{ values.short_exposure|money }}<small>short exposure</small></div>
+    </div>
+    {% if values.unmarked %}
+      <p class="muted">no current mark for: {{ values.unmarked|join(", ") }}</p>
+    {% endif %}
+  </div>
+  <div class="panel">
+    <h2>Equity curve vs {{ settings.benchmark_symbol }}</h2>
+    <canvas id="equity" height="120"></canvas>
+  </div>
+</div>
+
+<div class="panels">
+  <div class="panel" style="grid-column: 1 / -1">
+    <h2>Market regime</h2>
+    <div style="display:flex; gap:1.5rem; flex-wrap:wrap" class="num">
+      <span>{{ regime.index_symbol }}: <b>{{ regime.index_last|price }}</b>
+        <span class="muted">as of {{ regime.index_as_of|as_of }}</span>
+        · SMA50 <span class="{{ 'pos' if regime.index_vs_sma50 == 'above' else 'neg' }}">{{ regime.index_vs_sma50 or "n/a" }}</span>
+        · SMA200 <span class="{{ 'pos' if regime.index_vs_sma200 == 'above' else 'neg' }}">{{ regime.index_vs_sma200 or "n/a" }}</span>
+        · 1m <span class="{{ 'pos' if (regime.index_return_1m or 0) >= 0 else 'neg' }}">{{ regime.index_return_1m|money }}%</span></span>
+      <span>VIX: <b>{{ regime.vix|money("0.01") if regime.vix is not none else "unavailable" }}</b></span>
+      <span>leaders: {% for s, r in regime.sector_leaders %}{{ s }} ({{ r|money }}%) {% endfor %}</span>
+      <span>laggards: {% for s, r in regime.sector_laggards %}{{ s }} ({{ r|money }}%) {% endfor %}</span>
+    </div>
+  </div>
+</div>
+
+<div class="panels">
+  <div class="panel">
+    <h2>Top open calls</h2>
+    <table>
+      <tr><th>Side</th><th>Ticker</th><th class="num">Conf</th>
+          <th class="num">Entry <span class="muted">as of</span></th>
+          <th class="num">Stop</th><th class="num">Target</th><th></th></tr>
+      {% for rec in open_recs %}
+      <tr>
+        <td><span class="pill {{ rec.direction }}">{{ rec.direction|upper }}</span></td>
+        <td><a href="/research/{{ rec.ticker.symbol }}">{{ rec.ticker.symbol }}</a></td>
+        <td class="num">{{ rec.confidence }}</td>
+        <td class="num">{{ rec.entry_price_at_call|price }}
+            <span class="muted" style="font-size:.75rem">{{ rec.generated_at|as_of }}</span></td>
+        <td class="num">{{ rec.stop_price|price }}</td>
+        <td class="num">{{ rec.target_price|price }}</td>
+        <td><a class="btn" href="/portfolio?prefill={{ rec.id }}">execute</a></td>
+      </tr>
+      {% else %}
+      <tr><td colspan="7" class="muted">No open calls yet — run the screen (Screen page) or the refresh job.</td></tr>
+      {% endfor %}
+    </table>
+  </div>
+  <div class="panel">
+    <h2>Scoreboard (self-graded)</h2>
+    <table>
+      <tr><th>Window</th><th class="num">Graded</th><th class="num">Hit rate</th>
+          <th class="num">Avg α</th><th class="num">Avg outcome</th></tr>
+      {% for window in [30, 90, 180] %}
+        {% set s = scoreboard.get(window) %}
+        <tr><td>{{ window }}d</td>
+          <td class="num">{{ s.graded if s else 0 }}</td>
+          <td class="num">{{ s.hit_rate_pct if s and s.hit_rate_pct is not none else "—" }}</td>
+          <td class="num">{{ s.avg_alpha_pct if s and s.avg_alpha_pct is not none else "—" }}</td>
+          <td class="num">{{ s.avg_outcome_pct if s and s.avg_outcome_pct is not none else "—" }}</td></tr>
+      {% endfor %}
+    </table>
+    <p class="muted">α = call return − {{ settings.benchmark_symbol }} return, same window.</p>
+  </div>
+  <div class="panel">
+    <h2>Alerts</h2>
+    <ul>
+      {% for alert in alerts %}
+      <li class="{{ 'flash-bad' if alert.triggered_at else 'muted' }}">
+        {% if alert.ticker %}{{ alert.ticker.symbol }}{% endif %} {{ alert.message }}
+        {% if alert.triggered_at %}<span class="muted">triggered {{ alert.triggered_at|as_of }}</span>{% endif %}
+      </li>
+      {% else %}
+      <li class="muted">No alerts. Add some on the <a href="/alerts">Alerts</a> page.</li>
+      {% endfor %}
+    </ul>
+  </div>
+</div>
+
+<script>
+const curve = {{ curve|tojson }};
+new Chart(document.getElementById("equity"), {
+  type: "line",
+  data: { labels: curve.map(p => p.date),
+    datasets: [
+      { label: "Equity", data: curve.map(p => p.total), borderColor: "#58a6ff", tension: .25 },
+      { label: "{{ settings.benchmark_symbol }}", data: curve.map(p => p.spx),
+        borderColor: "#8b949e", borderDash: [4,4], tension: .25, yAxisID: "y1" },
+    ] },
+  options: { scales: { y: { position: "left" }, y1: { position: "right", grid: { drawOnChartArea: false } } },
+             plugins: { legend: { labels: { color: "#e6edf3" } } } },
+});
+</script>
+{% endblock %}

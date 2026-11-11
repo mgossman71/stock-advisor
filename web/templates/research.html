@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% set nav = "research" %}
+{% block title %}Research — Stock Advisor{% endblock %}
+{% block content %}
+<h1>Research</h1>
+{% if not_found %}
+<p class="flash-bad">No ticker “{{ not_found }}” in the database. Run the job or fetch it first:
+<code>python -m app.cli fetch {{ not_found }}</code></p>
+{% endif %}
+<form class="inline" method="get" action="/research">
+  <input name="q" placeholder="filter symbol…" value="{{ q or '' }}">
+  <button class="btn" type="submit">Search</button>
+</form>
+<div class="panel" style="margin-top:1rem">
+  <table>
+    <tr><th>Ticker</th><th>Stance</th><th class="num">Score</th>
+        <th>Engine</th><th>Created</th><th>Data as of</th><th></th></tr>
+    {% for report, symbol in reports %}
+    <tr>
+      <td><a href="/research/{{ symbol }}">{{ symbol }}</a></td>
+      <td class="{{ report.overall_stance }}">{{ report.overall_stance }}</td>
+      <td class="num">{{ report.score }}</td>
+      <td class="muted">{{ report.model_or_rule_version }}</td>
+      <td class="muted">{{ report.created_at|as_of }}</td>
+      <td class="muted">{{ report.data_as_of|as_of }}</td>
+      <td>
+        <form hx-post="/research/{{ symbol }}/run" style="display:inline">
+          <button class="btn secondary" type="submit">re-run (fetches fresh)</button>
+        </form>
+      </td>
+    </tr>
+    {% else %}
+    <tr><td colspan="7" class="muted">No reports yet.
+      <form hx-post="/research/AAPL/run" style="display:inline">
+        <button class="btn" type="submit">Research AAPL now</button>
+      </form></td></tr>
+    {% endfor %}
+  </table>
+</div>
+{% endblock %}

@@ -8,7 +8,10 @@ P&L formulas (implemented in :mod:`app.trading.positions`, tested in
 * Short positions keep a *negative* ``qty``; ``avg_cost`` is the price the
   shares were sold into.
 * Realised P&L closing a long:  ``(fill_price - avg_cost) * qty_closed - commission``
-* Realised P&L closing a short: ``(avg_cost - fill_price) * qty_closed - commission - borrow_cost``
+* Realised P&L closing a short: ``(avg_cost - fill_price) * qty_closed - commission``
+* Borrow cost accrues daily on open shorts (``app.trading.orders.accrue_short_borrow``)
+  and is charged straight into ``realized_pnl``, so a short's realized figure
+  is always net of borrow; ``borrow_cost`` keeps the accrual visible.
 """
 
 from __future__ import annotations

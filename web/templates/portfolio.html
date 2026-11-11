@@ -1,0 +1,93 @@
+{% extends "base.html" %}
+{% set nav = "portfolio" %}
+{% block title %}Portfolio — Stock Advisor{% endblock %}
+{% block content %}
+<h1>Portfolio</h1>
+<div class="panels">
+  <div class="panel">
+    <h2>Account <span class="muted">opened {{ account.opened_at|as_of }}</span></h2>
+    <div style="display:flex; gap:1.5rem; flex-wrap:wrap">
+      <div class="kpi">{{ values.total_value|money }}<small>equity</small></div>
+      <div class="kpi">{{ values.cash|money }}<small>cash</small></div>
+      <div class="kpi">{{ values.positions_value|money }}<small>positions</small></div>
+      <div class="kpi">{{ values.short_exposure|money }}<small>short exposure</small></div>
+    </div>
+  </div>
+  <div class="panel">
+    <h2>Order ticket <span class="muted">simulated fills at latest close ± slippage</span></h2>
+    <form hx-post="/portfolio/order" hx-target="#order-result" hx-swap="innerHTML" class="inline">
+      <select name="symbol" required>
+        {% for s in symbols %}
+        <option value="{{ s }}" {{ 'selected' if prefill and prefill.symbol == s }}>{{ s }}</option>
+        {% endfor %}
+      </select>
+      <select name="side" required>
+        {% for s in ['buy','sell','short','cover'] %}
+        <option value="{{ s }}" {{ 'selected' if prefill and prefill.side == s }}>{{ s|upper }}</option>
+        {% endfor %}
+      </select>
+      <input name="qty" type="number" min="1" value="{{ prefill.qty if prefill else 10 }}" style="width:6rem">
+      <input name="note" placeholder="note" value="{{ prefill.note if prefill else '' }}">
+      {% if prefill %}<input type="hidden" name="recommendation_id" value="{{ prefill.recommendation_id }}">{% endif %}
+      <button class="btn" type="submit">Submit order</button>
+    </form>
+    <div id="order-result"></div>
+  </div>
+</div>
+
+<div class="panel" style="margin-top:1rem">
+  <h2>Open positions</h2>
+  <table>
+    <tr><th>Ticker</th><th>Side</th><th class="num">Qty</th><th class="num">Avg cost</th>
+        <th class="num">Last</th><th>Last as of</th><th class="num">Unrealized</th>
+        <th class="num">Realized</th><th class="num">Days held</th></tr>
+    {% for p in positions %}
+    <tr>
+      <td>{{ p.ticker.symbol }}</td>
+      <td><span class="pill {{ 'bearish' if p.is_short else 'bullish' }}">{{ 'SHORT' if p.is_short else 'LONG' }}</span></td>
+      <td class="num">{{ p.qty }}</td>
+      <td class="num">{{ p.avg_cost|price }}</td>
+      <td class="num">{{ p.last_price|price }}</td>
+      <td class="muted">{{ p.last_price_at|as_of }}</td>
+      {% set u = p.unrealized_pnl %}
+      <td class="num {{ 'pos' if u and u > 0 else ('neg' if u and u < 0 else 'muted') }}">{{ u|money if u is not none else "unpriced" }}</td>
+      <td class="num {{ 'pos' if p.realized_pnl > 0 else ('neg' if p.realized_pnl < 0 else '') }}">{{ p.realized_pnl|money }}</td>
+      <td class="muted">{{ (data_today - p.opened_at).days if p.opened_at else "—" }}</td>
+    </tr>
+    {% else %}
+    <tr><td colspan="9" class="muted">Flat. Buy/sell/short/cover above — this is paper money.</td></tr>
+    {% endfor %}
+  </table>
+</div>
+
+{% if realized %}
+<div class="panel" style="margin-top:1rem">
+  <h2>Realized P&L by ticker (net of short borrow)</h2>
+  <table><tr><th>Ticker</th><th class="num">Realized</th></tr>
+  {% for symbol, pnl in realized %}
+  <tr><td>{{ symbol }}</td><td class="num {{ 'pos' if pnl > 0 else 'neg' }}">{{ pnl|money }}</td></tr>
+  {% endfor %}</table>
+</div>
+{% endif %}
+
+<div class="panel" style="margin-top:1rem">
+  <h2>Trade history</h2>
+  <table>
+    <tr><th>When</th><th>Side</th><th>Ticker</th><th class="num">Qty</th>
+        <th class="num">Fill</th><th class="num">Commission</th><th>Status</th><th>Note</th></tr>
+    {% for o in orders %}
+    <tr>
+      <td class="muted">{{ o.submitted_at|as_of }}</td>
+      <td>{{ o.side|upper }}</td>
+      <td>{{ o.ticker.symbol if o.ticker else "?" }}</td>
+      <td class="num">{{ o.qty }}</td>
+      <td class="num">{{ o.fill_price|price if o.fill_price is not none else "—" }}</td>
+      <td class="num">{{ o.commission|money if o.commission is not none else "—" }}</td>
+      <td class="{{ 'flash-ok' if o.status == 'filled' else 'flash-bad' }}">{{ o.status }}
+        {% if o.reject_reason %}<span class="muted">({{ o.reject_reason }})</span>{% endif %}</td>
+      <td class="muted">{{ o.note or "" }}</td>
+    </tr>
+    {% endfor %}
+  </table>
+</div>
+{% endblock %}

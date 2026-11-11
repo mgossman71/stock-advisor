@@ -1,0 +1,80 @@
+{% extends "base.html" %}
+{% set nav = "research" %}
+{% block title %}{{ ticker.symbol }} report — Stock Advisor{% endblock %}
+{% block content %}
+<h1>{{ ticker.symbol }} <span class="muted">{{ ticker.name or "name unavailable" }}</span>
+  {% if report %}<span class="pill {{ report.overall_stance }}">{{ report.overall_stance }}</span>
+  <span class="kpi" style="font-size:1.2rem">{{ report.score }}/100</span>{% endif %}</h1>
+{% if ticker.sector %}<p class="muted">{{ ticker.sector }}{% if ticker.industry %} · {{ ticker.industry }}{% endif %}</p>{% endif %}
+
+{% if report %}
+<form hx-post="/research/{{ ticker.symbol }}/run" class="inline" style="margin-bottom:1rem">
+  <button class="btn" type="submit">Run new research (fetch + score)</button>
+</form>
+
+<div class="panels">
+  <div class="panel" style="grid-column: 1 / -1">
+    <h3>Last 500 closes <span class="muted">(as of {{ report.data_as_of|as_of }})</span></h3>
+    <canvas id="prices" height="80"></canvas>
+  </div>
+</div>
+
+<div class="panels">
+  <div class="panel">
+    <h3>Bull case</h3>
+    <ul>{% for p in report.payload_json.bull_points %}<li>{{ p }}</li>{% else %}
+        <li class="muted">none</li>{% endfor %}</ul>
+  </div>
+  <div class="panel">
+    <h3>Bear case</h3>
+    <ul>{% for p in report.payload_json.bear_points %}<li>{{ p }}</li>{% else %}
+        <li class="muted">none</li>{% endfor %}</ul>
+  </div>
+  <div class="panel">
+    <h3>Risk flags</h3>
+    <ul>{% for p in report.payload_json.risks %}<li class="neg">{{ p }}</li>{% else %}
+        <li class="muted">none detected</li>{% endfor %}</ul>
+    {% if report.payload_json.missing_fields %}
+    <h3>Unavailable inputs</h3>
+    <ul>{% for m in report.payload_json.missing_fields %}<li class="muted">{{ m }}: unavailable</li>{% endfor %}</ul>
+    {% endif %}
+  </div>
+  <div class="panel">
+    <h3>Sub-scores (weights: {{ report.payload_json.weights_used|tojson }})</h3>
+    <table>
+      <tr><th>Block</th><th class="num">Score</th></tr>
+      {% for s in report.payload_json.sub_scores %}
+      <tr><td>{{ s.name }}</td>
+          <td class="num">{{ s.score if s.score is not none else "unavailable" }}</td></tr>
+      {% endfor %}
+    </table>
+    <p class="muted">Summary: {{ report.summary }}</p>
+  </div>
+  <div class="panel" style="grid-column: 1 / -1">
+    <h3>Evidence ({{ report.payload_json.evidence|length }} cited data points)</h3>
+    <ul class="evidence">
+      {% for e in report.payload_json.evidence %}
+      <li><b>{{ e.label }}</b> = {{ e.value }}
+        <span class="muted">[{{ e.source }}{% if e.as_of %} · {{ e.as_of }}{% endif %}]</span></li>
+      {% endfor %}
+    </ul>
+  </div>
+</div>
+
+<script>
+const series = {{ price_series_json|tojson }};
+new Chart(document.getElementById("prices"), {
+  type: "line",
+  data: { labels: series.map(p => p.date),
+          datasets: [{ label: "{{ ticker.symbol }} close", data: series.map(p => p.close),
+                       borderColor: "#58a6ff", tension: .2 }] },
+  options: { plugins: { legend: { labels: { color: "#e6edf3" } } } },
+});
+</script>
+{% else %}
+<p>No report stored yet for {{ ticker.symbol }}.</p>
+<form hx-post="/research/{{ ticker.symbol }}/run">
+  <button class="btn" type="submit">Run research (fetch + score)</button>
+</form>
+{% endif %}
+{% endblock %}

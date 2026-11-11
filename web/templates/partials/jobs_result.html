@@ -1,0 +1,17 @@
+<div class="job-result">
+  <b>Refresh job done.</b>
+  fetched={{ report.fetched|length }}
+  (errors: {{ report.fetch_errors|length }}) ·
+  scored={{ report.scored }} ·
+  new calls={{ report.new_recommendations }} ·
+  graded={{ report.graded }} ·
+  statuses={{ report.statuses }} ·
+  borrow={{ report.borrow_charged }} ·
+  snapshot={{ report.snapshot_date }} ·
+  alerts triggered={{ report.alerts_triggered }}
+  {% if report.fetch_errors %}
+  <ul class="neg">{% for e in report.fetch_errors %}<li>{{ e }}</li>{% endfor %}</ul>
+  {% endif %}
+  {% for n in report.notes %}<p class="muted">{{ n }}</p>{% endfor %}
+  <p class="muted">Refresh the page to see updated numbers.</p>
+</div>

@@ -1,0 +1,18 @@
+<div class="job-result">
+  <p class="{{ 'flash-ok' if accepted else 'flash-bad' }}">{{ message or reason }}</p>
+  {% if accepted %}
+  <p>cash after: <b>{{ values.cash|money }}</b> ·
+     equity: <b>{{ values.total_value|money }}</b></p>
+  <table>
+    <tr><th>Ticker</th><th class="num">Qty</th><th class="num">Avg</th>
+        <th class="num">Last</th><th>Last as of</th><th class="num">Unrealized</th></tr>
+    {% for p in positions %}
+    <tr><td>{{ p.ticker.symbol }}</td><td class="num">{{ p.qty }}</td>
+        <td class="num">{{ p.avg_cost|price }}</td><td class="num">{{ p.last_price|price }}</td>
+        <td class="muted">{{ p.last_price_at|as_of }}</td>
+        {% set u = p.unrealized_pnl %}
+        <td class="num">{{ u|money if u is not none else "unpriced" }}</td></tr>
+    {% endfor %}
+  </table>
+  {% endif %}
+</div>

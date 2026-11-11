@@ -16,7 +16,7 @@ name: stock-advisor
 x-app: &app
   build: .
   image: stock-advisor:latest
-  environment:
+  environment: &app-env
     # Absolute path into the named volume below.
     DATABASE_URL: sqlite:////data/stock_advisor.db
     # "auto" = yfinance -> nasdaq -> fred. Pin one (yfinance|nasdaq|fred) to debug fallbacks.
@@ -56,6 +56,10 @@ services:
   ingest:
     <<: *app
     profiles: ["data"]
+    environment:
+      <<: *app-env
+      # A one-shot container must not arm the scheduler (two processes, one DB).
+      SCHEDULER_ENABLED: "0"
     # Migrations run in the entrypoint, so `up` is not required first; but keep
     # the ordering so two containers never migrate the same volume at once.
     depends_on:

@@ -26,7 +26,7 @@ COPY alembic.ini pyproject.toml ./
 COPY app ./app
 COPY migrations ./migrations
 COPY web ./web
-COPY scripts/docker-entrypoint.sh ./scripts/
+COPY scripts ./scripts
 # Offline fallback for the S&P 500 universe: Wikipedia is rate-limited/unreachable
 # from containers fairly often, and this CSV is why that is not fatal.
 COPY data/sp500.csv ./data/sp500.csv

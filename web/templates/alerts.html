@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% set nav = "alerts" %}
+{% block title %}Alerts — Stock Advisor{% endblock %}
+{% block content %}
+<h1>Alerts</h1>
+<div class="panel">
+  <h2>Create</h2>
+  <form method="post" action="/alerts" class="inline">
+    <select name="symbol" required>
+      {% for s in symbols %}<option>{{ s }}</option>{% endfor %}
+    </select>
+    <select name="alert_type" required>
+      <option value="price_above">price above</option>
+      <option value="price_below">price below</option>
+      <option value="earnings_within">earnings within (days)</option>
+      <option value="drawdown_pct">drawdown %</option>
+    </select>
+    <input name="threshold" placeholder="threshold" style="width:8rem">
+    <button class="btn" type="submit">Add alert</button>
+  </form>
+</div>
+<div class="panel" style="margin-top:1rem">
+  <table>
+    <tr><th>Ticker</th><th>Type</th><th class="num">Threshold</th><th>Message</th>
+        <th>Triggered</th><th>Observed</th><th></th></tr>
+    {% for a in alerts %}
+    <tr class="{{ 'flash-bad' if a.triggered_at and not a.acknowledged else '' }}">
+      <td>{{ a.ticker.symbol if a.ticker else "—" }}</td>
+      <td>{{ a.type }}</td>
+      <td class="num">{{ a.threshold if a.threshold is not none else "—" }}</td>
+      <td>{{ a.message }}</td>
+      <td class="muted">{{ a.triggered_at|as_of if a.triggered_at else "not triggered" }}</td>
+      <td class="num">{{ a.observed_value|price if a.observed_value is not none else "—" }}
+        <span class="muted">{{ a.observed_at|as_of if a.observed_at else "" }}</span></td>
+      <td>{% if not a.acknowledged %}
+        <form method="post" action="/alerts/{{ a.id }}/ack" style="display:inline">
+          <button class="btn secondary" type="submit">ack</button></form>{% else %}
+        <span class="muted">acked</span>{% endif %}</td>
+    </tr>
+    {% else %}
+    <tr><td colspan="7" class="muted">No alerts defined.</td></tr>
+    {% endfor %}
+  </table>
+</div>
+{% endblock %}

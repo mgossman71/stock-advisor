@@ -1,0 +1,72 @@
+{% extends "base.html" %}
+{% set nav = "recommendations" %}
+{% block title %}Recommendations — Stock Advisor{% endblock %}
+{% block content %}
+<h1>Recommendations</h1>
+<p>
+  {% for s, n in counts.items() %}<span class="pill">{{ s }}: {{ n }}</span> {% endfor %}
+</p>
+<form class="inline" method="get" action="/recommendations">
+  <select name="status">
+    <option value="">all statuses</option>
+    {% for s in ['open','hit_stop','hit_target','closed','expired'] %}
+    <option value="{{ s }}" {{ 'selected' if s == status }}>{{ s }}</option>{% endfor %}
+  </select>
+  <select name="direction">
+    <option value="">long + short</option>
+    {% for s in ['long','short'] %}<option value="{{ s }}" {{ 'selected' if s == direction }}>{{ s }}</option>{% endfor %}
+  </select>
+  <button class="btn" type="submit">Filter</button>
+</form>
+
+<div class="panel" style="margin-top:1rem">
+  <h2>Self-grading scoreboard</h2>
+  <table>
+    <tr><th>Window</th><th class="num">Graded</th><th class="num">Hit rate %</th>
+        <th class="num">Avg α vs {{ benchmark }}</th><th class="num">Avg outcome %</th></tr>
+    {% for window in [30, 90, 180] %}
+      {% set s = board.get(window) %}
+    <tr><td>{{ window }}d</td><td class="num">{{ s.graded if s else 0 }}</td>
+      <td class="num">{{ s.hit_rate_pct if s and s.hit_rate_pct is not none else "—" }}</td>
+      <td class="num {{ 'pos' if s and s.avg_alpha_pct and s.avg_alpha_pct > 0 else 'neg' if s and s.avg_alpha_pct and s.avg_alpha_pct < 0 else '' }}">
+        {{ s.avg_alpha_pct if s and s.avg_alpha_pct is not none else "—" }}</td>
+      <td class="num">{{ s.avg_outcome_pct if s and s.avg_outcome_pct is not none else "—" }}</td></tr>
+    {% endfor %}
+  </table>
+</div>
+
+<div class="panel" style="margin-top:1rem">
+  <table>
+    <tr><th>Generated</th><th>Side</th><th>Ticker</th><th class="num">Conf</th>
+        <th class="num">Entry</th><th>Status</th><th class="num">α30 / α90 / α180</th>
+        <th>Rationale (cited)</th><th></th></tr>
+    {% for rec in recs %}
+    {% set o = rec.outcome %}
+    <tr>
+      <td class="muted">{{ rec.generated_at|as_of }}</td>
+      <td><span class="pill {{ 'bullish' if rec.direction == 'long' else 'bearish' }}">{{ rec.direction|upper }}</span></td>
+      <td><a href="/research/{{ rec.ticker.symbol }}">{{ rec.ticker.symbol }}</a></td>
+      <td class="num">{{ rec.confidence }}</td>
+      <td class="num">{{ rec.entry_price_at_call|price }}</td>
+      <td>{{ rec.status }}</td>
+      <td class="num mono">
+        {% if o %}{{ o.alpha_30d if o.alpha_30d is not none else "—" }} /
+                 {{ o.alpha_90d if o.alpha_90d is not none else "—" }} /
+                 {{ o.alpha_180d if o.alpha_180d is not none else "—" }}
+        {% else %}—{% endif %}</td>
+      <td class="muted" style="max-width:24rem">{{ rec.rationale[:160] }}{% if rec.rationale|length > 160 %}…{% endif %}</td>
+      <td>
+        {% if rec.status == 'open' %}
+        <a class="btn" href="/portfolio?prefill={{ rec.id }}">execute</a>
+        <form hx-post="/recommendations/{{ rec.id }}/close" style="display:inline">
+          <button class="btn secondary" type="submit">close</button>
+        </form>
+        {% endif %}
+      </td>
+    </tr>
+    {% else %}
+    <tr><td colspan="9" class="muted">No recommendations. Run a screen on the Screen page.</td></tr>
+    {% endfor %}
+  </table>
+</div>
+{% endblock %}

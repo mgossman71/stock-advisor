@@ -22,6 +22,10 @@ from app.ingestion.ingest import refresh_symbol
 from app.ingestion.stats import coverage_by_ticker, recent_fetch_log, table_counts
 from app.ingestion.universe import load_universe, persist_universe
 from app.providers.registry import build_provider, provider_names
+from app.research.engine import RuleBasedAdvisor
+from app.trading.accounts import get_or_open_account
+from app.trading.orders import execute_order, latest_price
+from app.trading.snapshots import mark_positions, portfolio_values, write_snapshot
 
 PERIOD_DAYS = {"3mo": 92, "6mo": 186, "1y": 365, "2y": 730, "5y": 1826}
 
@@ -151,6 +155,98 @@ def cmd_providers(_: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_trade(args: argparse.Namespace) -> int:
+    """Execute one paper order (buy/sell/short/cover) and print the outcome."""
+    settings = get_settings()
+    with session_scope() as session:
+        account = get_or_open_account(session, settings)
+        if args.fetch:
+            provider = build_provider(settings)
+            refresh_symbol(session, provider, args.symbol,
+                           with_alternatives=False)
+            session.commit()
+        result = execute_order(session, account, args.symbol, args.side, args.qty,
+                               settings=settings)
+        if not result.accepted:
+            print(f"order {result.order.status}: {result.reason}")
+            return 1
+        order = result.order
+        priced = latest_price(session, order.ticker_id)
+        print(
+            f"{args.side} {args.qty} {args.symbol.upper()} @ {order.fill_price} "
+            f"(ref {order.reference_price}, commission {order.commission}) "
+            f"as of {priced[1] if priced else '?'}"
+        )
+        print(f"cash after: {account.cash_balance}")
+        _print_portfolio(session, account, settings)
+        session.commit()
+    return 0
+
+
+def cmd_portfolio(_: argparse.Namespace) -> int:
+    """Show account, open positions and the latest snapshot."""
+    settings = get_settings()
+    with session_scope() as session:
+        account = get_or_open_account(session, settings)
+        mark_positions(session, account)
+        _print_portfolio(session, account, settings)
+        write_snapshot(session, account, dt.date.today(),
+                       benchmark_symbol=settings.benchmark_symbol)
+        session.commit()
+    return 0
+
+
+def _print_portfolio(session, account, settings) -> None:
+    """Print open positions + equity (shared by trade/portfolio commands)."""
+    values = portfolio_values(session, account)
+    print(f"positions ({values['cash']} cash):")
+    for position in account.positions:
+        if position.qty == 0:
+            continue
+        side = "SHORT" if position.is_short else "LONG "
+        print(
+            f"  {side} {position.ticker.symbol:7s} qty={str(position.qty):>8s} "
+            f"avg={position.avg_cost} last={position.last_price} "
+            f"uPnL={position.unrealized_pnl} rPnL={position.realized_pnl}"
+        )
+    print(
+        f"equity={values['total_value']} positions_value={values['positions_value']} "
+        f"short_exposure={values['short_exposure']}"
+    )
+
+
+def cmd_research(args: argparse.Namespace) -> int:
+    """Fetch (optional) -> score -> persist a full research report for one symbol."""
+    settings = get_settings()
+    with session_scope() as session:
+        if args.refresh:
+            provider = build_provider(settings)
+            refresh_symbol(session, provider, args.symbol)
+            session.commit()
+        advisor = RuleBasedAdvisor()
+        report = advisor.research(session, args.symbol)
+        if report is None:
+            print(f"no ticker {args.symbol.upper()} in DB - fetch first")
+            return 1
+        recs = advisor.recommendations_for(session, report)
+        session.commit()
+        print(f"{report.ticker.symbol} stance={report.overall_stance} "
+              f"score={report.score} as_of={report.data_as_of} version={report.model_or_rule_version}")
+        print(f"summary: {report.summary}")
+        for label, items in (("bull", report.payload_json["bull_points"]),
+                             ("bear", report.payload_json["bear_points"]),
+                             ("risk", report.payload_json["risks"])):
+            for item in items[:6]:
+                print(f"  {label}: {item}")
+        if report.payload_json["missing_fields"]:
+            print(f"  unavailable: {', '.join(report.payload_json['missing_fields'])}")
+        print(f"  evidence: {len(report.payload_json['evidence'])} cited data points")
+        for rec in recs:
+            print(f"  -> {rec.direction.upper()} {rec.ticker.symbol} conf={rec.confidence} "
+                  f"entry={rec.entry_price_at_call} stop={rec.stop_price} target={rec.target_price}")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     """Assemble the argparse tree."""
     parser = argparse.ArgumentParser(prog="app.cli", description="Stock advisor data tools")
@@ -170,6 +266,23 @@ def build_parser() -> argparse.ArgumentParser:
 
     sub.add_parser("stats", help="row counts + coverage + fetch log").set_defaults(func=cmd_stats)
     sub.add_parser("providers", help="show/probe the provider chain").set_defaults(func=cmd_providers)
+
+    trade = sub.add_parser("trade", help="paper order: buy/sell/short/cover")
+    trade.add_argument("side", choices=["buy", "sell", "short", "cover"])
+    trade.add_argument("symbol")
+    trade.add_argument("qty", type=int)
+    trade.add_argument("--fetch", action="store_true",
+                       help="refresh market data for the symbol before filling")
+    trade.set_defaults(func=cmd_trade)
+
+    sub.add_parser("portfolio", help="account + open positions + snapshot").set_defaults(
+        func=cmd_portfolio
+    )
+
+    research = sub.add_parser("research", help="score + report one symbol")
+    research.add_argument("symbol")
+    research.add_argument("--refresh", action="store_true", help="fetch fresh data first")
+    research.set_defaults(func=cmd_research)
     return parser
 
 
