@@ -36,6 +36,34 @@
       from the Docker container use <code>host.docker.internal</code> instead of <code>localhost</code>.
       The nightly screen makes one call per ticker; untick it if your hardware is slow.</p>
   </div>
+  <div class="panel" id="autorefresh">
+    <h2>Auto-refresh <span class="muted">(runs the refresh job on a timer)</span>
+      {% if auto.enabled %}<span class="pill bullish">on · every {{ auto.minutes }} min</span>
+      {% else %}<span class="pill neutral">off</span>{% endif %}</h2>
+    <form method="post" action="/settings/autorefresh" class="inline">
+      <label><input type="checkbox" name="autorefresh_enabled" value="1" {% if auto.enabled %}checked{% endif %}>
+        enabled</label>
+      <label>every <select name="autorefresh_minutes">
+        {% set presets = [5, 10, 15, 30, 60, 120, 240, 720] %}
+        {% for m in presets %}<option value="{{ m }}" {% if m == auto.minutes %}selected{% endif %}>
+          {{ m }} min{% if m >= 60 %} ({{ (m / 60)|round(1)|string|replace('.0', '') }} h){% endif %}</option>{% endfor %}
+        {% if auto.minutes not in presets %}<option value="{{ auto.minutes }}" selected>{{ auto.minutes }} min</option>{% endif %}
+      </select></label>
+      <label><input type="checkbox" name="autorefresh_market_hours_only" value="1"
+        {% if auto.market_hours_only %}checked{% endif %}>
+        only during US market hours</label>
+      <button class="btn" type="submit">Save</button>
+    </form>
+    <p class="muted">
+      {% if auto.enabled and auto_next %}Next run {{ auto_next.strftime('%Y-%m-%d %H:%M %Z') }}{% if auto.market_hours_only %} (skipped if the market is closed){% endif %}.
+      {% elif auto.enabled and not auto_live %}Saved, but the scheduler isn't running in this process (<code>SCHEDULER_ENABLED=0</code>).
+      {% endif %}
+      Each run is the same full pass as <b>Run refresh job</b>: fetch prices, book fills and dividends,
+      re-screen, grade calls, check alerts. A run that's due while another job is still going is skipped,
+      so a short interval can't stack up. Market hours = Mon–Fri 09:30–16:15 New York time (holidays not
+      excluded). If the AI analyst is used in the screen, every run makes one model call per ticker. Pick a
+      longer interval if your hardware is slow. The nightly job ({{ settings.nightly_cron }} UTC) runs regardless.</p>
+  </div>
   <div class="panel">
     <h2>Scoring weights <span class="muted">(must sum to 1.0; used by every future report)</span></h2>
     <form method="post" action="/settings/weights" class="inline">

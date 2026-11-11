@@ -8,6 +8,7 @@ from decimal import Decimal, InvalidOperation
 from fastapi import APIRouter, Form, Request
 from fastapi.responses import RedirectResponse
 
+from app import autorefresh
 from app.auth import MIN_PASSWORD_LENGTH
 from app.config import get_settings
 from app.db.base import session_scope
@@ -41,11 +42,15 @@ def settings_page(request: Request, pw: str = ""):
         app_settings = {s.key: s.value for s in session.query(AppSetting)}
         has_orders = session.query(Order).count() > 0
         llm = load_llm_config(session)
+        auto = autorefresh.load_config(session)
     return templates.TemplateResponse(
         request=request, name="settings.html",
         context={"disclaimer": DISCLAIMER, "weights": weights,
                  "app_settings": app_settings, "settings": settings,
                  "has_orders": has_orders, "llm": llm,
+                 "auto": auto, "auto_next": autorefresh.next_run_at(),
+                 "auto_live": autorefresh.scheduler_running(),
+                 "auto_min": autorefresh.MIN_MINUTES, "auto_max": autorefresh.MAX_MINUTES,
                  "pw_message": PASSWORD_MESSAGES.get(pw),
                  "min_password_length": MIN_PASSWORD_LENGTH,
                  "env_summary": {
@@ -110,6 +115,24 @@ def save_defaults(alert_default_drawdown_pct: str = Form(""),
             row.updated_at = dt.datetime.now(dt.timezone.utc)
         session.commit()
     return RedirectResponse("/settings", status_code=303)
+
+
+@router.post("/settings/autorefresh")
+def save_autorefresh(autorefresh_enabled: str = Form(""),
+                     autorefresh_minutes: str = Form(""),
+                     autorefresh_market_hours_only: str = Form("")):
+    """Persist the interval and re-arm the live scheduler (no restart needed)."""
+    with session_scope() as session:
+        current = autorefresh.load_config(session)
+        config = autorefresh.AutoRefreshConfig(
+            enabled=autorefresh_enabled == "1",
+            minutes=autorefresh.parse_minutes(autorefresh_minutes, current.minutes),
+            market_hours_only=autorefresh_market_hours_only == "1",
+        )
+        autorefresh.save_config(session, config)
+        session.commit()
+    autorefresh.apply_schedule(config)
+    return RedirectResponse("/settings#autorefresh", status_code=303)
 
 
 @router.post("/settings/llm")

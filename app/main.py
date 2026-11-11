@@ -21,7 +21,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, Red
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import select, text
 
-from app import auth
+from app import auth, autorefresh
 from app.config import BASE_DIR, get_settings
 from app.db.base import session_scope
 from app.ingestion.stats import coverage_by_ticker, recent_fetch_log, table_counts
@@ -121,6 +121,9 @@ def start_scheduler() -> None:
                       id="nightly", replace_existing=True)
     scheduler.start()
     app.state.scheduler = scheduler
+    autorefresh.set_scheduler(scheduler)
+    with session_scope() as session:
+        autorefresh.apply_schedule(autorefresh.load_config(session))
     logger.info("scheduler armed: nightly cron %s UTC", settings.nightly_cron)
 
 
@@ -128,6 +131,7 @@ def start_scheduler() -> None:
 def stop_scheduler() -> None:
     scheduler = getattr(app.state, "scheduler", None)
     if scheduler is not None:
+        autorefresh.set_scheduler(None)
         scheduler.shutdown(wait=False)
 
 

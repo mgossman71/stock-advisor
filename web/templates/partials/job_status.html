@@ -1,5 +1,5 @@
 {% set titles = {"first-run setup": "Setting up the app for the first time",
-                 "refresh": "Refresh job", "nightly": "Nightly job", "screen": "Screening"} %}
+                 "refresh": "Refresh job", "auto-refresh": "Auto-refresh", "nightly": "Nightly job", "screen": "Screening"} %}
 {% if status.running %}
 <div class="job-result" hx-get="/jobs/status?watching=1" hx-trigger="every 3s" hx-swap="outerHTML">
   <b>{{ titles.get(status.name, status.name) }}</b> — {{ status.phase }}{% if status.detail %} {{ status.detail }}{% endif %}

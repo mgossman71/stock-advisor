@@ -137,6 +137,7 @@ def startup(tmp_path, monkeypatch):
     class NoScheduler:
         def __init__(self, **kw): ...
         def add_job(self, *a, **kw): ...
+        def get_job(self, job_id): return None
         def start(self): ...
         def shutdown(self, wait=False): ...
 
@@ -144,6 +145,7 @@ def startup(tmp_path, monkeypatch):
     import app.main as main
 
     monkeypatch.setattr(main, "BackgroundScheduler", NoScheduler)
+    monkeypatch.setattr(main.autorefresh, "_scheduler", None)  # restored on teardown
     monkeypatch.setattr(main.runner, "start", lambda name, job: started.append(name) or True)
     yield main, started
     dispose_all()

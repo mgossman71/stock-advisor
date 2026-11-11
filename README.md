@@ -87,6 +87,13 @@ keeps everything current. The "Run refresh job" and "Screen now" buttons
 also run in the background, so a reverse proxy's request timeout can't
 kill them.
 
+**Auto-refresh** (Settings → Auto-refresh, off by default) runs the same
+pass as "Run refresh job" every 5 min to 12 h. It can be limited to US
+market hours (Mon–Fri 09:30–16:15 New York, no holiday calendar). Saving
+re-arms the scheduler straight away, so there's no restart. A tick that's
+due while another job is running is skipped, not queued. The nightly cron
+still runs either way.
+
 ### Password protection
 
 Login is always on. Every page and API needs it except `/login`, `/setup`,

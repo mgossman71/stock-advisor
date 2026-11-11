@@ -25,7 +25,7 @@ make clean-db-docker           # down -v: ALSO deletes the database volume
 make docker-stats              # stats as the container sees them (volume, not ./data)
 make docker-fetch TICKER=MSFT  # one-shot fetch into the container's volume
 
-make test                      # .venv/bin/python -m pytest -q -> 307 tests, <4s, no network
+make test                      # .venv/bin/python -m pytest -q -> 323 tests, <4s, no network
 make migrate                   # alembic upgrade head
 rm -f data/stock_advisor.db* && make migrate    # rebuild the local DB from scratch
 bash scripts/bootstrap.sh      # .venv (Python 3.11/3.12), install deps, migrate — idempotent
@@ -172,6 +172,11 @@ the README whenever these change), `test_report.py`/`test_advisor.py`
   (`commit_each`) so a slow LLM doesn't hold SQLite's write lock.
   `POST /jobs/refresh` is the manual trigger and is idempotent — short-borrow accrual is gated once per calendar
   day by a `data_fetch_log` row (`provider='system'`, `endpoint='short_borrow'`).
+- **Auto-refresh** (`app/autorefresh.py`): interval re-runs of the refresh
+  pipeline, config in `app_settings` rows `autorefresh_*` (off by default).
+  `POST /settings/autorefresh` re-arms the live scheduler via
+  `apply_schedule` (module-level `_scheduler`, set at startup; `None` in
+  tests/CLI). Ticks use `runner.run_blocking`, so a busy runner skips them.
 - **Web routes use `session_scope()` directly**; expire_on_commit is False so
   ORM objects stay readable after commit, but lazy relationships must be
   touched *inside* the scope before rendering. HTMX full-page actions return
