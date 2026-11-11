@@ -51,12 +51,21 @@ details.rationale > div { color: var(--text); }
   padding: .45rem .8rem; font-weight: 600; cursor: pointer; }
 .btn.secondary { background: transparent; color: var(--text); border: 1px solid var(--line); }
 .btn.danger { background: var(--red); color: #fff; }
-.row-actions { display: flex; gap: .35rem; align-items: center; flex-wrap: wrap; }
+.row-actions { display: flex; gap: .4rem; align-items: center; flex-wrap: nowrap; }
 .row-actions form { display: inline; }
 .row-actions .btn { padding: .3rem .6rem; font-size: .8rem; white-space: nowrap; }
+/* Action column sizes to its buttons and never wraps them - rows stay one
+   tidy line; the table scrolls horizontally if the window is narrow. */
+td.actions, th.actions { width: 1%; white-space: nowrap; }
+/* Secondary actions (close/dismiss): quiet text buttons, so the primary
+   pair (simulate / I bought it) stays visually dominant. */
+.btn.quiet { background: transparent; color: var(--muted); border: 0;
+  text-decoration: underline; font-weight: 400; padding: .3rem .2rem; }
+.btn.quiet:hover { color: var(--text); }
 input, select { background: #0d1117; color: var(--text); border: 1px solid var(--line);
   border-radius: 6px; padding: .4rem .55rem; font: inherit; }
 form.inline { display: flex; gap: .5rem; align-items: center; flex-wrap: wrap; }
+.jobform { display: flex; gap: .5rem; align-items: center; flex-wrap: wrap; }
 footer { color: var(--muted); font-size: .8rem; padding: 1rem 1.25rem; border-top: 1px solid var(--line); }
 .kpi { font-size: 1.5rem; font-weight: 700; }
 .kpi small { display: block; font-size: .75rem; color: var(--muted); font-weight: 400; }

@@ -45,12 +45,12 @@
       <tr><th class="num">#</th><th>Side</th><th>Ticker</th><th class="num">Conf</th>
           <th class="num">Entry @ call</th><th class="num">Last</th>
           <th class="num">Stop</th><th class="num">Target</th>
-          <th class="num">Suggested qty</th><th>Already held</th><th></th></tr>
+          <th class="num">Suggested qty</th><th>Already held</th><th class="actions">Actions</th></tr>
       {% for idea in open_recs %}
       {% set rec = idea.rec %}
       <tr>
         <td class="num muted">{{ idea.rank }}</td>
-        <td><span class="pill {{ rec.direction }}">{{ rec.direction|upper }}</span></td>
+        <td><span class="pill {{ 'bullish' if rec.direction == 'long' else 'bearish' }}">{{ rec.direction|upper }}</span></td>
         <td><a href="/research/{{ idea.symbol }}">{{ idea.symbol }}</a></td>
         <td class="num">{{ rec.confidence }}</td>
         <td class="num">{{ rec.entry_price_at_call|price }}
@@ -63,7 +63,7 @@
         <td>{% if idea.held == 'real' %}<span class="pill bullish">REAL</span>
             {% elif idea.held == 'paper' %}<span class="pill">paper</span>
             {% else %}<span class="muted">not acted on</span>{% endif %}</td>
-        <td>
+        <td class="actions">
           <div class="row-actions">
             <a class="btn" href="/portfolio?prefill={{ rec.id }}" title="place a virtual order in the paper account - no real money">simulate</a>
             {% if rec.direction == 'long' %}

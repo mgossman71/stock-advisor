@@ -45,7 +45,7 @@
     <tr><th>Generated</th><th>Side</th><th>Ticker</th><th class="num">Conf</th>
         <th class="num">Entry @ call</th><th class="num">Last</th>
         <th>Status</th><th class="num">α30 / α90 / α180</th>
-        <th>Rationale (cited)</th><th></th></tr>
+        <th>Rationale (cited)</th><th class="actions">Actions</th></tr>
     {% for rec in recs %}
     {% set o = rec.outcome %}
     {% set p = prices.get(rec.id) %}
@@ -69,7 +69,7 @@
           <div>{{ rec.rationale }}</div>
         </details>
       </td>
-      <td>
+      <td class="actions">
         {% if rec.status == 'open' %}
         <div class="row-actions">
           <a class="btn" href="/portfolio?prefill={{ rec.id }}" title="place a virtual order in the paper account - no real money">simulate</a>
@@ -77,10 +77,10 @@
           <a class="btn" href="/investments?rec={{ rec.id }}" title="record a purchase you actually made with real money - tracked with gain/loss and estimated tax">I bought it</a>
           {% endif %}
           <form hx-post="/recommendations/{{ rec.id }}/close">
-            <button class="btn secondary" type="submit" title="close this call manually">close</button>
+            <button class="btn quiet" type="submit" title="close this call manually">close</button>
           </form>
           <form hx-post="/recommendations/{{ rec.id }}/dismiss">
-            <button class="btn secondary" type="submit" title="I chose not to act on this call">dismiss</button>
+            <button class="btn quiet" type="submit" title="I chose not to act on this call">dismiss</button>
           </form>
         </div>
         {% endif %}
