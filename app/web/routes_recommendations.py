@@ -3,25 +3,53 @@
 from __future__ import annotations
 
 import datetime as dt
+from decimal import Decimal
 
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
 from app.config import get_settings
 from app.db.base import session_scope
-from app.db.models import Recommendation
+from app.db.models import Position, Recommendation
 from app.research.outcomes import scoreboard
+from app.tracking.lots import open_lots
 from app.trading.orders import latest_price
 from app.web.common import DISCLAIMER, templates
 
 router = APIRouter()
 
 
+def _shares(qty: Decimal) -> str:
+    """10, 2.5 - never 1E+1 or 10.000000."""
+    return f"{qty.normalize():f}"
+
+
+def holdings_by_ticker(session) -> dict[int, list[str]]:
+    """ticker_id -> labels for what is held now: paper position, real lots."""
+    held: dict[int, list[str]] = {}
+    paper: dict[int, Decimal] = {}
+    for position in session.query(Position).filter(Position.qty != 0):
+        paper[position.ticker_id] = paper.get(position.ticker_id, Decimal(0)) + position.qty
+    for ticker_id, qty in paper.items():
+        if qty:
+            side = "SHORT" if qty < 0 else "LONG"
+            held.setdefault(ticker_id, []).append(f"PAPER {side} {_shares(abs(qty))}")
+    real: dict[int, Decimal] = {}
+    for lot in open_lots(session):
+        real[lot.trade.ticker_id] = real.get(lot.trade.ticker_id, Decimal(0)) + lot.remaining
+    for ticker_id, qty in real.items():
+        if qty:
+            held.setdefault(ticker_id, []).append(f"REAL {_shares(qty)}")
+    return held
+
+
 @router.get("/recommendations")
 def recommendations_page(request: Request, status: str | None = None,
-                         direction: str | None = None, sort: str = "best"):
+                         direction: str | None = None, sort: str = "best",
+                         held: str = ""):
     settings = get_settings()
     with session_scope() as session:
+        holdings = holdings_by_ticker(session)
         query = session.query(Recommendation)
         if sort == "recent":
             query = query.order_by(Recommendation.generated_at.desc())
@@ -32,6 +60,10 @@ def recommendations_page(request: Request, status: str | None = None,
             query = query.filter(Recommendation.status == status)
         if direction:
             query = query.filter(Recommendation.direction == direction)
+        if held == "yes":
+            query = query.filter(Recommendation.ticker_id.in_(list(holdings)))
+        elif held == "no":
+            query = query.filter(Recommendation.ticker_id.not_in(list(holdings)))
         recs = query.limit(200).all()
         for rec in recs:
             _ = (rec.ticker.symbol, rec.outcome)  # load inside session
@@ -47,7 +79,7 @@ def recommendations_page(request: Request, status: str | None = None,
         request=request, name="recommendations.html",
         context={"disclaimer": DISCLAIMER, "recs": recs, "board": board,
                  "counts": counts, "status": status, "direction": direction,
-                 "sort": sort, "prices": prices,
+                 "sort": sort, "prices": prices, "holdings": holdings, "held": held,
                  "benchmark": settings.benchmark_symbol},
     )
 

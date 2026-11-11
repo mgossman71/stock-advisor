@@ -470,3 +470,26 @@ def test_full_refresh_fetches_news_by_default(client, monkeypatch):
     client.post("/jobs/refresh")
     client.post("/jobs/refresh", data={"with_alternatives": "0"})
     assert [kw["with_alternatives"] for kw in seen] == [True, False]
+
+
+def test_recommendations_show_what_is_already_held(client, monkeypatch):
+    """Paper positions and real lots are tagged on their calls, and filterable."""
+    from app.tracking import record_trade
+
+    _seed_open_calls()
+    _live_quote(monkeypatch, "PRC", "102.00")
+    client.post("/portfolio/order", data={"symbol": "PRC", "side": "buy", "qty": "10"})
+    with session_scope() as s:
+        record_trade(s, "AMC", "buy", D("2.5"), D("70"), trade_date=dt.date(2026, 1, 5))
+        s.commit()
+
+    html = client.get("/recommendations").text
+    assert ">PAPER LONG 10</span>" in html
+    assert ">REAL 2.5</span>" in html
+    assert html.count('class="pill held"') == 2, "SHT/CLS are not held: no tag"
+
+    only_held = client.get("/recommendations?held=yes").text
+    assert "/research/PRC" in only_held and "/research/AMC" in only_held
+    assert "/research/SHT" not in only_held
+    not_held = client.get("/recommendations?held=no").text
+    assert "/research/SHT" in not_held and "/research/PRC" not in not_held

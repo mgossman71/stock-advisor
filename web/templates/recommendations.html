@@ -16,6 +16,11 @@
     <option value="">long + short</option>
     {% for s in ['long','short'] %}<option value="{{ s }}" {{ 'selected' if s == direction }}>{{ s }}</option>{% endfor %}
   </select>
+  <select name="held">
+    <option value="">held + not held</option>
+    <option value="yes" {{ 'selected' if held == 'yes' }}>only what I hold</option>
+    <option value="no" {{ 'selected' if held == 'no' }}>only what I don't hold</option>
+  </select>
   <select name="sort">
     <option value="best" {{ 'selected' if sort == 'best' }}>best first</option>
     <option value="recent" {{ 'selected' if sort == 'recent' }}>newest first</option>
@@ -52,7 +57,10 @@
     <tr>
       <td class="muted" style="white-space:nowrap" data-label="Generated">{{ rec.generated_at.strftime('%Y-%m-%d') }}</td>
       <td data-label="Side"><span class="pill {{ 'bullish' if rec.direction == 'long' else 'bearish' }}">{{ rec.direction|upper }}</span></td>
-      <td data-label="Ticker"><a href="/research/{{ rec.ticker.symbol }}">{{ rec.ticker.symbol }}</a></td>
+      <td data-label="Ticker"><a href="/research/{{ rec.ticker.symbol }}">{{ rec.ticker.symbol }}</a>
+        {% for label in holdings.get(rec.ticker_id, []) %}
+        <br><span class="pill held" title="you hold this now ({{ 'paper account' if label.startswith('PAPER') else 'real money' }})">{{ label }}</span>
+        {% endfor %}</td>
       <td class="num" data-label="Conf">{{ rec.confidence }}</td>
       <td class="num" data-label="Entry @ call">{{ rec.entry_price_at_call|price }}</td>
       <td class="num" data-label="Last">{{ p[0]|price if p else "—" }}
@@ -94,6 +102,8 @@
   <p class="muted" style="margin-top:.5rem"><b>Entry @ call</b> is the close on the day the call was
     generated; <b>Last</b> is the newest stored close with its date - what the ticker trades at now,
     per the data (never a live quote, never a guess).</p>
+  <p class="muted"><b>PAPER LONG/SHORT n</b> under a ticker = your open paper position;
+    <b>REAL n</b> = shares you hold for real (Investments page).</p>
   <p class="muted"><b>Buttons:</b> <b>simulate</b> = a virtual order in the paper account (fake
     money, practice only); <b>I bought it</b> = you actually purchased this stock with real money -
     it goes in your real ledger with gain/loss and estimated tax; <b>close</b> = end the call
