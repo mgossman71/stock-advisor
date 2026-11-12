@@ -494,3 +494,31 @@ def test_recommendations_show_what_is_already_held(client, monkeypatch):
     assert "/research/SHT" not in only_held
     not_held = client.get("/recommendations?held=no").text
     assert "/research/SHT" in not_held and "/research/PRC" not in not_held
+
+
+def test_index_name_filter():
+    from app.web.common import _index_name
+    assert _index_name("^GSPC") == "S&P 500"
+    assert _index_name("SPY") == "SPY"
+    assert _index_name(None) == ""
+
+
+def test_dashboard_equity_chart_names_the_benchmark(client):
+    """No raw ^GSPC in the title; one snapshot shows the placeholder, two draw."""
+    from app.db.models import PortfolioSnapshot
+
+    html = client.get("/").text
+    assert "Paper account vs S&amp;P 500" in html
+    assert "Equity curve vs ^GSPC" not in html
+    assert 'id="equity"' not in html and "Not enough history yet" in html
+
+    with session_scope() as session:
+        for i, (total, spx) in enumerate([("100000", "7500"), ("101000", "7450")]):
+            session.add(PortfolioSnapshot(
+                snapshot_date=dt.date(2026, 11, 10) + dt.timedelta(days=i),
+                cash=D(total), positions_value=D("0"), total_value=D(total),
+                spx_close=D(spx)))
+        session.commit()
+    html = client.get("/").text
+    assert 'id="equity"' in html and "Not enough history yet" not in html
+    assert "rebase(" in html and "y1" not in html

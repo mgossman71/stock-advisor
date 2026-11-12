@@ -16,8 +16,15 @@
     {% endif %}
   </div>
   <div class="panel">
-    <h2>Equity curve vs {{ settings.benchmark_symbol }}</h2>
+    {% set bench = settings.benchmark_symbol|index_name %}
+    <h2>Paper account vs {{ bench }} <span class="muted">% change since the first day</span></h2>
+    {% if curve|length >= 2 %}
     <div class="chart"><canvas id="equity"></canvas></div>
+    {% else %}
+    <p class="muted">Not enough history yet — the chart fills in as daily snapshots
+      accumulate (one per day). It will compare your paper account's growth with the
+      {{ bench }}, the usual yardstick for "the market".</p>
+    {% endif %}
   </div>
 </div>
 
@@ -25,7 +32,7 @@
   <div class="panel" style="grid-column: 1 / -1">
     <h2>Market regime</h2>
     <div class="regime">
-      <span>{{ regime.index_symbol }}: <b>{{ regime.index_last|price }}</b>
+      <span>{{ regime.index_symbol|index_name }}: <b>{{ regime.index_last|price }}</b>
         <span class="muted">as of {{ regime.index_as_of|as_of }}</span>
         · SMA50 <span class="{{ 'pos' if regime.index_vs_sma50 == 'above' else 'neg' }}">{{ regime.index_vs_sma50 or "n/a" }}</span>
         · SMA200 <span class="{{ 'pos' if regime.index_vs_sma200 == 'above' else 'neg' }}">{{ regime.index_vs_sma200 or "n/a" }}</span>
@@ -150,7 +157,7 @@
           <td class="num">{{ s.avg_outcome_pct if s and s.avg_outcome_pct is not none else "—" }}</td></tr>
       {% endfor %}
     </table>
-    <p class="muted">α = call return − {{ settings.benchmark_symbol }} return, same window.</p>
+    <p class="muted">α = call return − {{ settings.benchmark_symbol|index_name }} return, same window.</p>
   </div>
   <div class="panel">
     <h2>Alerts</h2>
@@ -167,18 +174,37 @@
   </div>
 </div>
 
+{% if curve|length >= 2 %}
 <script>
 const curve = {{ curve|tojson }};
+// Rebase each series on its own first value so both read as "% change since
+// day one" on one axis - dollars vs an index level on two axes isn't comparable.
+function rebase(values) {
+  const base = values.find(v => v != null);
+  return values.map(v => (v == null || !base) ? null : (v / base - 1) * 100);
+}
+const totals = curve.map(p => p.total), spx = curve.map(p => p.spx);
+const raw = [totals, spx];
 new Chart(document.getElementById("equity"), {
   type: "line",
   data: { labels: curve.map(p => p.date),
     datasets: [
-      { label: "Equity", data: curve.map(p => p.total), borderColor: "#58a6ff", tension: .25 },
-      { label: "{{ settings.benchmark_symbol }}", data: curve.map(p => p.spx),
-        borderColor: "#8b949e", borderDash: [4,4], tension: .25, yAxisID: "y1" },
+      { label: "Paper account", data: rebase(totals), borderColor: "#58a6ff", tension: .25, spanGaps: true },
+      { label: "{{ settings.benchmark_symbol|index_name }}", data: rebase(spx),
+        borderColor: "#8b949e", borderDash: [4,4], tension: .25, spanGaps: true },
     ] },
-  options: { maintainAspectRatio: false, scales: { y: { position: "left" }, y1: { position: "right", grid: { drawOnChartArea: false } } },
-             plugins: { legend: { labels: { color: "#e6edf3" } } } },
+  options: { maintainAspectRatio: false,
+             scales: { y: { ticks: { callback: v => v.toFixed(1) + "%" } } },
+             plugins: { legend: { labels: { color: "#e6edf3" } },
+                        tooltip: { callbacks: { label: ctx => {
+                          const v = raw[ctx.datasetIndex][ctx.dataIndex];
+                          const pct = (ctx.parsed.y >= 0 ? "+" : "") + ctx.parsed.y.toFixed(2) + "%";
+                          const level = ctx.datasetIndex === 0
+                            ? "$" + v.toLocaleString(undefined, {maximumFractionDigits: 0})
+                            : v.toLocaleString(undefined, {maximumFractionDigits: 2});
+                          return `${ctx.dataset.label}: ${pct} (${level})`;
+                        } } } } },
 });
 </script>
+{% endif %}
 {% endblock %}

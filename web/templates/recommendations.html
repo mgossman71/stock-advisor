@@ -37,7 +37,7 @@
   <h2>Self-grading scoreboard{% if lens == 'emerging' %} <span class="muted">emerging-opportunity calls only</span>{% elif lens == 'core' %} <span class="muted">core research calls only</span>{% endif %}</h2>
   <table>
     <tr><th>Window</th><th class="num">Graded</th><th class="num">Hit rate %</th>
-        <th class="num">Avg α vs {{ benchmark }}</th><th class="num">Avg outcome %</th></tr>
+        <th class="num">Avg α vs {{ benchmark|index_name }}</th><th class="num">Avg outcome %</th></tr>
     {% for window in [30, 90, 180] %}
       {% set s = board.get(window) %}
     <tr><td>{{ window }}d</td><td class="num">{{ s.graded if s else 0 }}</td>

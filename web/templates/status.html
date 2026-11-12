@@ -28,7 +28,7 @@
       Database <code>{{ database }}</code> &middot; {{ tables }} tables &middot;
       providers <code>{{ provider_chain | join(" &rarr; ") }}</code>
       (MARKET_DATA_PROVIDER=<code>{{ market_data_provider }}</code>) &middot;
-      benchmark <code>{{ benchmark }}</code>
+      benchmark <code>{{ benchmark }}</code> ({{ benchmark|index_name }})
     </div>
 
     <h2>Rows</h2>

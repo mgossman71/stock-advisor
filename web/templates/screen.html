@@ -107,7 +107,7 @@
   {% if backtest and not backtest.error %}
   <p class="muted">Replayed at {{ backtest.months }} month-ends, {{ backtest.first_date }} to
     {{ backtest.last_date }}: every stock scored with only the data available that day, then
-    what happened next vs {{ backtest.benchmark }}. Run {{ backtest.generated_at[:16]|replace("T", " ") }} UTC.</p>
+    what happened next vs the {{ backtest.benchmark|index_name }}. Run {{ backtest.generated_at[:16]|replace("T", " ") }} UTC.</p>
   <div class="tablewrap">
   <table>
     <tr><th>Group</th><th class="num">Picks</th>

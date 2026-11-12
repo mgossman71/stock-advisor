@@ -44,6 +44,16 @@ def _as_of(value: dt.datetime | dt.date | None) -> str:
     return value.isoformat()
 
 
+#: Yahoo-style index tickers -> the name people know them by.
+INDEX_NAMES = {"^GSPC": "S&P 500", "^VIX": "VIX", "^IXIC": "Nasdaq Composite",
+               "^DJI": "Dow Jones", "^RUT": "Russell 2000"}
+
+
+def _index_name(symbol: str | None) -> str:
+    """``^GSPC`` -> ``S&P 500``; unknown symbols pass through unchanged."""
+    return INDEX_NAMES.get(symbol, symbol) if symbol else ""
+
+
 def _json_safe(obj):
     """Recursively convert Decimal/datetime for JSON payloads in <script> tags."""
     if isinstance(obj, Decimal):
@@ -61,6 +71,7 @@ def register_filters(env) -> None:
     env.filters["money"] = _money
     env.filters["price"] = _price
     env.filters["as_of"] = _as_of
+    env.filters["index_name"] = _index_name
     # {{ ticker.market_cap|micro }} -> True below the micro-cap line
     env.filters["micro"] = is_micro
 
