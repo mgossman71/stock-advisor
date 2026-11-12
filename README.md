@@ -138,6 +138,17 @@ by sector, size band (small < $2B, mid, large ≥ $10B), held, and shortlist.
 fundamentals per night, all without a restart. `python -m app.cli scan
 --top 25` prints the ranking from stored data.
 
+### Current price vs. the report
+
+A stock's page shows its **current stored price** at the top: the newest
+intraday quote (labelled "live quote HH:MM ET") or the latest close, with
+the change against the previous close. **A research report is a snapshot:**
+its numbers and the AI's text are frozen at the price it was written at, and
+a price refresh doesn't rewrite it. When the price has moved 0.5% or more
+since, an amber note says so ("written when NVDA was 168.89; moved −3.4%
+since"); "Run new research" brings the report up to date. The Research
+lists show the current price too.
+
 ### Chart range
 
 A stock's price chart opens at the **default range** from Settings → Display
@@ -403,7 +414,7 @@ pages — a call with an unfinished window is *not graded*, not "0".
 ## Tests
 
 ```
-make test   # 420 tests, <4s, no network
+make test   # 426 tests, <4s, no network
 ```
 
 Pinned invariants: P&L math (incl. shorts + borrow), scoring thresholds

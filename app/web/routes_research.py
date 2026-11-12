@@ -25,7 +25,9 @@ from app.providers.registry import build_provider
 from app.research.llm_advisor import advisor_for
 from app.research.report import closes_with_dates
 from app.web.common import DISCLAIMER, _json_safe, templates
-from app.web.display import RANGES, load_default_range, slice_range, valid_range
+from app.web.display import (
+    RANGES, load_default_range, price_now, report_price, slice_range, valid_range,
+)
 
 router = APIRouter()
 
@@ -76,11 +78,14 @@ def _research_page(request: Request, *, q: str | None = None, err: str | None = 
         matches = _search(session, q) if q else []
         for m in matches:  # touch lazy attrs inside the session
             _ = (m["ticker"].symbol, m["ticker"].name)
+            m["now"] = price_now(session, m["ticker"].id)
+        prices = {report.ticker_id: price_now(session, report.ticker_id)
+                  for report, _symbol in reports}
     candidate = (not_found or q or "").upper()
     exact = any(m["ticker"].symbol == candidate for m in matches)
     return templates.TemplateResponse(
         request=request, name="research.html", status_code=status_code,
-        context={"disclaimer": DISCLAIMER, "reports": reports, "q": q,
+        context={"disclaimer": DISCLAIMER, "reports": reports, "q": q, "prices": prices,
                  "matches": matches, "not_found": not_found,
                  # Offer "research it now" for a plausible symbol we don't hold.
                  "can_add": candidate if SYMBOL_RE.match(candidate) and not exact else None,
@@ -107,6 +112,7 @@ def research_report(request: Request, symbol: str,
             select(ResearchReport).where(ResearchReport.ticker_id == ticker.id)
             .order_by(ResearchReport.created_at.desc()).limit(1)
         ).first()
+        now = price_now(session, ticker.id)
         default_range = load_default_range(session)
         chart_range = valid_range(range_) or default_range
         all_bars = closes_with_dates(session, ticker.id)
@@ -118,9 +124,22 @@ def research_report(request: Request, symbol: str,
                  "price_series": _json_safe(price_series),
                  "price_series_json": _json_safe(price_series),
                  "chart_range": chart_range, "default_range": default_range,
+                 "now": now, "report_price": _moved(report, now),
                  "ranges": RANGES,
                  "history_from": all_bars[0][0] if all_bars else None},
     )
+
+
+def _moved(report: ResearchReport | None, now) -> dict | None:
+    """The price a report was written at and how far the stock has moved
+    since - reports are snapshots, the price above them is live."""
+    if report is None or now is None:
+        return None
+    written = report_price(report)
+    if written is None or not written[0]:
+        return None
+    price, as_of = written
+    return {"price": price, "as_of": as_of, "moved_pct": (now.price / price - 1) * 100}
 
 
 def _hx_redirect(target: str) -> JSONResponse:

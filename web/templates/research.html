@@ -1,6 +1,13 @@
 {% extends "base.html" %}
 {% set nav = "research" %}
 {% block title %}Research — Stock Advisor{% endblock %}
+{% macro last_price(now) -%}
+  {%- if now -%}
+  <td class="num">{{ now.price|price }}
+    {% if now.change_pct is not none %}<span class="{{ 'pos' if now.change_pct >= 0 else 'neg' }}" style="font-size:.8rem">{{ '%+.1f'|format(now.change_pct) }}%</span>{% endif %}
+    <br><span class="muted" style="font-size:.75rem">{{ now.label }}</span></td>
+  {%- else -%}<td class="num muted">—</td>{%- endif -%}
+{%- endmacro %}
 {% block content %}
 <h1>Research</h1>
 {% if error %}<p class="flash-bad">{{ error }}</p>{% endif %}
@@ -27,15 +34,16 @@
 <div class="panel" style="margin-top:1rem">
   <h2>Stocks matching “{{ q }}”</h2>
   <table>
-    <tr><th>Ticker</th><th>Company</th><th>Latest report</th><th class="num">Score</th><th></th></tr>
+    <tr><th>Ticker</th><th class="num">Last price</th><th>Company</th><th>Latest report</th><th class="num">Score</th><th></th></tr>
     {% for m in matches %}
     <tr>
       <td><a href="/research/{{ m.ticker.symbol }}">{{ m.ticker.symbol }}</a></td>
+      {{ last_price(m.now) }}
       <td>{{ m.ticker.name or "—" }}</td>
       {% if m.report %}
       <td class="{{ m.report.overall_stance }}">{{ m.report.overall_stance }}
         <span class="muted">{{ m.report.created_at|as_of }}</span></td>
-      <td class="num">{{ m.report.score }}</td>
+      <td class="num">{{ m.report.score|round(1) }}</td>
       {% else %}
       <td class="muted">not researched yet</td><td class="num">—</td>
       {% endif %}
@@ -46,7 +54,7 @@
       </td>
     </tr>
     {% else %}
-    <tr><td colspan="5" class="muted">No stored stock matches “{{ q }}”.</td></tr>
+    <tr><td colspan="6" class="muted">No stored stock matches “{{ q }}”.</td></tr>
     {% endfor %}
   </table>
 </div>
@@ -55,13 +63,14 @@
 <div class="panel" style="margin-top:1rem">
   <h2>Latest reports</h2>
   <table>
-    <tr><th>Ticker</th><th>Stance</th><th class="num">Score</th>
+    <tr><th>Ticker</th><th class="num">Last price</th><th>Stance</th><th class="num">Score</th>
         <th>Engine</th><th>Created</th><th>Data as of</th><th></th></tr>
     {% for report, symbol in reports %}
     <tr data-report="{{ report.id }}">
       <td><a href="/research/{{ symbol }}">{{ symbol }}</a></td>
+      {{ last_price(prices.get(report.ticker_id)) }}
       <td class="{{ report.overall_stance }}">{{ report.overall_stance }}</td>
-      <td class="num">{{ report.score }}</td>
+      <td class="num">{{ report.score|round(1) }}</td>
       <td class="muted">{{ report.model_or_rule_version }}</td>
       <td class="muted">{{ report.created_at|as_of }}</td>
       <td class="muted">{{ report.data_as_of|as_of }}</td>
@@ -72,7 +81,7 @@
       </td>
     </tr>
     {% else %}
-    <tr><td colspan="7" class="muted">No reports yet.
+    <tr><td colspan="8" class="muted">No reports yet.
       <form hx-post="/research/AAPL/run" style="display:inline">
         <button class="btn" type="submit">Research AAPL now</button>
       </form></td></tr>

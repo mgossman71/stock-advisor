@@ -85,6 +85,12 @@ footer { color: var(--muted); font-size: .8rem; padding: 1rem 1.25rem; border-to
 .kpi small { display: block; font-size: .75rem; color: var(--muted); font-weight: 400; }
 .job-result { background: var(--panel); border: 1px solid var(--line); border-radius: 8px;
   margin: .75rem 1.25rem; padding: .75rem 1rem; font-size: .9rem; }
+/* Stock page: the current price, big, with today's change and its source. */
+.price-now { display: flex; align-items: baseline; gap: .4rem .8rem; flex-wrap: wrap;
+  margin: -.4rem 0 .4rem; font-variant-numeric: tabular-nums; }
+.price-big { font-size: 1.9rem; font-weight: 700; }
+.stale-note { background: #24210f; color: var(--amber); border: 1px solid var(--line);
+  border-radius: 8px; padding: .5rem .8rem; }
 /* Chart range buttons on a stock's page: compact, wrap on phones. */
 .range-picker { display: flex; gap: .35rem; flex-wrap: wrap; margin: 0 0 .4rem; }
 .range-picker .btn { padding: .2rem .6rem; font-size: .8rem; min-height: 0; }

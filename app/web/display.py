@@ -1,4 +1,4 @@
-"""Display preferences: how much price history a chart shows.
+"""Display helpers: chart range preferences and the "current price" readout.
 
 Analysis always uses all stored history; this only decides what the user
 *sees*.  The global default lives in ``app_settings`` (Settings -> Display).
@@ -9,12 +9,14 @@ fresh visit starts from the global default.
 from __future__ import annotations
 
 import datetime as dt
+from dataclasses import dataclass
 from decimal import Decimal
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.db.models import AppSetting
+from app.db.models import AppSetting, PriceHistory, ResearchReport
 
 #: key -> (button label, calendar days back from the newest bar; None = all).
 RANGES: dict[str, tuple[str, int | None]] = {
@@ -57,3 +59,69 @@ def slice_range(bars: list[tuple[dt.date, Decimal]], key: str) -> list[tuple[dt.
         return bars
     start = bars[-1][0] - dt.timedelta(days=days)
     return [bar for bar in bars if bar[0] >= start]
+
+
+# ------------------------------------------------------------ current price
+
+NEW_YORK = ZoneInfo("America/New_York")
+
+
+@dataclass(frozen=True)
+class PriceNow:
+    """The newest stored price and how it compares with the previous close."""
+
+    price: Decimal
+    date: dt.date
+    #: True = an intraday quote (replaced by the real bar after the close).
+    live: bool
+    fetched_at: dt.datetime | None
+    previous_close: Decimal | None
+
+    @property
+    def change(self) -> Decimal | None:
+        return None if self.previous_close is None else self.price - self.previous_close
+
+    @property
+    def change_pct(self) -> Decimal | None:
+        if not self.previous_close:
+            return None
+        return (self.price / self.previous_close - 1) * 100
+
+    @property
+    def label(self) -> str:
+        """"live quote 10:33 ET, Nov 12" / "close Nov 11"."""
+        day = self.date.strftime("%b %-d")
+        if self.live and self.fetched_at is not None:
+            fetched = self.fetched_at if self.fetched_at.tzinfo else \
+                self.fetched_at.replace(tzinfo=dt.timezone.utc)
+            return f"live quote {fetched.astimezone(NEW_YORK):%H:%M} ET, {day}"
+        return f"{'live quote' if self.live else 'close'} {day}"
+
+
+def price_now(session: Session, ticker_id: int) -> PriceNow | None:
+    """Newest stored price (intraday quote or settled close) + previous close."""
+    rows = session.execute(
+        select(PriceHistory.date, PriceHistory.close, PriceHistory.provisional,
+               PriceHistory.fetched_at)
+        .where(PriceHistory.ticker_id == ticker_id, PriceHistory.close.isnot(None))
+        .order_by(PriceHistory.date.desc()).limit(2)).all()
+    if not rows:
+        return None
+    last = rows[0]
+    return PriceNow(price=last.close, date=last.date, live=bool(last.provisional),
+                    fetched_at=last.fetched_at,
+                    previous_close=rows[1].close if len(rows) > 1 else None)
+
+
+def report_price(report: ResearchReport) -> tuple[Decimal, str | None] | None:
+    """The price a report was written at: its cited "last close" evidence
+    (value, date).  Reports are snapshots - this is what their numbers and
+    the AI's text are based on."""
+    for row in (report.payload_json or {}).get("evidence", []):
+        if row.get("label") == "last close" and row.get("value") not in (None, "None"):
+            try:
+                return Decimal(str(row["value"])), row.get("as_of")
+            except ArithmeticError:
+                return None
+    return None
+
