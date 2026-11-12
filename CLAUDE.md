@@ -25,7 +25,7 @@ make clean-db-docker           # down -v: ALSO deletes the database volume
 make docker-stats              # stats as the container sees them (volume, not ./data)
 make docker-fetch TICKER=MSFT  # one-shot fetch into the container's volume
 
-make test                      # .venv/bin/python -m pytest -q -> 364 tests, no network
+make test                      # .venv/bin/python -m pytest -q -> 387 tests, no network
 make migrate                   # alembic upgrade head
 rm -f data/stock_advisor.db* && make migrate    # rebuild the local DB from scratch
 bash scripts/bootstrap.sh      # .venv (Python 3.11/3.12), install deps, migrate — idempotent
@@ -165,6 +165,15 @@ the README whenever these change), `test_report.py`/`test_advisor.py`
   and, on a fresh DB (`needs_first_run`: no universe, or under half of it screened), starts
   first-run setup (`AUTO_SETUP`); one-shot containers (`ingest`) must set
   `SCHEDULER_ENABLED=0` or two processes race the same SQLite volume.
+- **Two lenses, one scan** (`app/research/emerging.py`): `run_scan` also scores
+  every stock on the emerging-opportunity lens (price/volume only, RS is a
+  universe percentile, so it is computed after all rows) into
+  `scan_scores.emerging_*`. `emerging_symbols` (top `emerging_size`, score
+  >= 55) joins the shortlist for the full fetch + report + AI;
+  `screener.emerging_recommendation` makes `emerging-v1[+llm:...]` longs
+  (lens >= 70, AI must be bullish / rules not bearish, -8%/+25%, horizon
+  short = 120-day expiry). Scoreboard/recommendations split by
+  `lens_filter` on `engine_version` - keep the `emerging` prefix.
 - **Long work goes through `app/background.py`'s `runner`** (single-flight,
   daemon thread, progress via `GET /jobs/status`): first-run setup, nightly,
   `POST /jobs/refresh`, `POST /screen/run`. Never run the pipeline inside a

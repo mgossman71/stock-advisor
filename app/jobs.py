@@ -46,7 +46,7 @@ from app.providers.registry import build_provider
 from app.providers.base import MarketDataProvider
 from app.research.outcomes import grade_recommendation, update_statuses
 from app.research.scan import (
-    SCAN_LOOKBACK_DAYS, ScanResult, fundamentals_due, load_scan_config,
+    SCAN_LOOKBACK_DAYS, ScanResult, emerging_symbols, fundamentals_due, load_scan_config,
     record_universe_refresh, run_scan, shortlist_symbols, universe_due,
     universe_stock_symbols,
 )
@@ -145,11 +145,13 @@ def price_symbols(session: Session, settings: Settings) -> list[str]:
 
 def target_symbols(session: Session, settings: Settings) -> list[str]:
     """What gets the *full* nightly fetch (news, analysts, earnings,
-    dividends): the latest scan's shortlist + everything ``price_symbols``
+    dividends): the latest scan's shortlist and emerging candidates +
+    everything ``price_symbols``
     covers + VIX.  The rest of the universe only gets cheap history
     (``scan_fetch_symbols``)."""
     symbols = set(price_symbols(session, settings))
     symbols.update(shortlist_symbols(session))
+    symbols.update(emerging_symbols(session))
     symbols.add(settings.vix_symbol)
     return sorted(symbols)
 

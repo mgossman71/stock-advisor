@@ -8,11 +8,13 @@ from fastapi import APIRouter, Request
 
 from app.config import get_settings
 from app.db.base import session_scope
-from app.db.models import Alert
+from app.db.models import Alert, Recommendation
 from app.research import indicators
 from app.research.outcomes import Scoreboard, scoreboard as build_scoreboard
 from app.research.ranking import ranked_ideas
 from app.research.report import closes_with_dates
+from app.research.scan import emerging_candidates, load_scan_config
+from app.trading.orders import latest_price
 from app.trading.accounts import get_or_open_account
 from app.trading.snapshots import equity_curve, portfolio_values
 from app.web.common import DISCLAIMER, _json_safe, templates
@@ -40,6 +42,8 @@ def dashboard(request: Request):
             Alert.triggered_at.isnot(None), Alert.acknowledged.is_(False)).count()
         regime = _regime_panel(session, settings)
         board = build_scoreboard(session).overall
+        early = _early_movers(session)
+        emerging_board = build_scoreboard(session, lens="emerging").overall
         as_of = _latest_data_as_of(session)
     return templates.TemplateResponse(
         request=request, name="dashboard.html",
@@ -48,8 +52,29 @@ def dashboard(request: Request):
             "curve": _json_safe(curve), "open_recs": open_recs, "alerts": untriggered_alerts,
             "alert_badge": triggered_count, "regime": regime, "scoreboard": board,
             "data_as_of": as_of, "settings": settings,
+            "early": early, "emerging_board": emerging_board,
         },
     )
+
+
+def _early_movers(session) -> dict:
+    """The emerging lens's top candidates with price and any open call on them."""
+    config = load_scan_config(session)
+    rows = []
+    for scan, ticker in emerging_candidates(session, limit=10):
+        call = session.query(Recommendation).filter(
+            Recommendation.ticker_id == ticker.id, Recommendation.status == "open",
+            Recommendation.direction == "long",
+        ).order_by(Recommendation.generated_at.desc()).first()
+        priced = latest_price(session, ticker.id)
+        rows.append({
+            "symbol": ticker.symbol, "name": ticker.name, "score": scan.emerging_score,
+            "rank": scan.emerging_rank, "reasons": (scan.emerging or {}).get("reasons", []),
+            "researched": scan.emerging_rank <= config.emerging_size,
+            "last": priced[0] if priced else None, "last_date": priced[1] if priced else None,
+            "call": call,
+        })
+    return {"rows": rows, "researched": config.emerging_size}
 
 
 def _latest_data_as_of(session) -> dt.datetime | None:

@@ -44,9 +44,11 @@
   <select name="view">
     <option value="">whole scan</option>
     <option value="shortlist" {{ 'selected' if view == 'shortlist' }}>shortlist only</option>
+    <option value="emerging" {{ 'selected' if view == 'emerging' }}>emerging candidates only</option>
   </select>
   <select name="sort">
     <option value="rank">sort: scan rank</option>
+    <option value="emerging" {{ 'selected' if sort == 'emerging' }}>sort: emerging lens</option>
     {% for b in blocks %}<option value="{{ b }}" {{ 'selected' if sort == b }}>sort: {{ b }}</option>{% endfor %}
   </select>
   <button class="btn" type="submit">Filter</button>
@@ -59,7 +61,7 @@
   <div class="tablewrap">
   <table class="wide" id="screener">
     <tr><th class="num">#</th><th>Symbol</th><th>Name</th><th class="muted">Sector</th>
-        <th class="num">Mkt cap</th><th class="num">Scan</th>
+        <th class="num">Mkt cap</th><th class="num">Scan</th><th class="num">Emerging</th>
         <th class="num">Value</th><th class="num">Momentum</th><th class="num">Quality</th>
         <th class="num">Risk</th><th>Full report</th><th>You hold</th></tr>
     {% for row in rows %}
@@ -70,6 +72,7 @@
       <td class="muted">{{ row.ticker.sector or "—" }}</td>
       <td class="num mono">{{ row.cap }}</td>
       <td class="num mono">{{ row.scan.score|round(1) }}{% if not row.scan.has_fundamentals %} <span class="muted" title="no fundamentals yet: price-only score">ᵖ</span>{% endif %}</td>
+      <td class="num mono" title="{{ row.reasons|join('; ') }}">{% if row.scan.emerging_score is not none %}{{ row.scan.emerging_score|round(0)|int }}{% if row.lens_pick %} <span class="pill bullish" title="emerging candidate: full research tonight">▲</span>{% endif %}{% else %}<span class="muted">—</span>{% endif %}</td>
       {% for b in blocks %}
       <td class="num mono muted">{{ row.subs[b]|round(1) if row.subs[b] is not none else "n/a" }}</td>
       {% endfor %}
@@ -81,7 +84,7 @@
       <td class="{{ 'held' if row.held else 'muted' }}" style="white-space:nowrap">{{ row.held|join(' · ') if row.held else '—' }}</td>
     </tr>
     {% else %}
-    <tr><td colspan="12" class="muted">Nothing matches.</td></tr>
+    <tr><td colspan="13" class="muted">Nothing matches.</td></tr>
     {% endfor %}
   </table>
   </div>
@@ -92,7 +95,9 @@
   <p class="muted"><b>Scan</b> = the same scoring weights as a full report, from stored
     prices and the latest fundamentals. There is no news, analyst-action or earnings data at
     this stage, so <i>sentiment</i> only sees the consensus price target.
-    ★ = shortlisted for full research. ᵖ = price-only score (fundamentals not fetched yet),
+    ★ = shortlisted for full research. <b>Emerging</b> = the early-mover lens (0–100): relative
+    strength, breakouts on volume, accumulation, tight bases, accelerating momentum, growth; hover
+    a score for its reasons. ▲ = emerging candidate, also fully researched tonight. ᵖ = price-only score (fundamentals not fetched yet),
     ranked after every stock that has fundamentals. <b>Full report</b> = the latest
     complete research verdict, if the stock has one.</p>
 </div>

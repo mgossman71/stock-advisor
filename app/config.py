@@ -68,6 +68,9 @@ class Settings(BaseSettings):
     scan_min_dollar_volume: Decimal = Decimal("1000000")
     #: Top-N scan scores that get the full fetch + report (+ AI) each night.
     shortlist_size: int = Field(default=25, ge=1, le=500)
+    #: Top-N *emerging-lens* candidates that also get full research (+ AI)
+    #: each night (``app/research/emerging.py``); 0 turns the lens's shortlist off.
+    emerging_shortlist_size: int = Field(default=10, ge=0, le=200)
     #: Fundamentals refreshed per night across the scan universe, stalest first.
     scan_fundamentals_per_night: int = Field(default=400, ge=0, le=5000)
     #: Days between refreshes of the US-listed stock list.

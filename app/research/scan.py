@@ -32,6 +32,8 @@ from sqlalchemy.orm import Session
 from app.background import Progress
 from app.config import Settings, get_settings
 from app.db.models import AppSetting, Fundamentals, PriceHistory, ScanScore, Ticker
+from app.research import emerging
+from app.research.emerging import Bars
 from app.research.report import price_signals
 from app.research.scoring import (
     composite, load_weights, momentum_score, quality_score, risk_score, sentiment_score,
@@ -53,6 +55,7 @@ KEYS = {
     "min_price": "scan_min_price",
     "min_dollar_volume": "scan_min_dollar_volume",
     "shortlist_size": "scan_shortlist_size",
+    "emerging_size": "scan_emerging_size",
     "fundamentals_per_night": "scan_fundamentals_per_night",
 }
 UNIVERSE_SOURCE_KEY = "universe_source"
@@ -71,6 +74,8 @@ class ScanConfig:
     min_dollar_volume: Decimal
     shortlist_size: int
     fundamentals_per_night: int
+    #: Emerging-lens candidates fully researched each night (0 = off).
+    emerging_size: int = 10
 
 
 def _decimal(raw: str | None, default: Decimal) -> Decimal:
@@ -101,6 +106,8 @@ def load_scan_config(session: Session, settings: Settings | None = None) -> Scan
         shortlist_size=_int(rows.get(KEYS["shortlist_size"]), settings.shortlist_size, 1, 500),
         fundamentals_per_night=_int(rows.get(KEYS["fundamentals_per_night"]),
                                     settings.scan_fundamentals_per_night, 0, 5000),
+        emerging_size=_int(rows.get(KEYS["emerging_size"]),
+                           settings.emerging_shortlist_size, 0, 200),
     )
 
 
@@ -121,6 +128,7 @@ def config_from_form(form, current: ScanConfig) -> ScanConfig:
         shortlist_size=_int(form.get("scan_shortlist_size"), current.shortlist_size, 1, 500),
         fundamentals_per_night=_int(form.get("scan_fundamentals_per_night"),
                                     current.fundamentals_per_night, 0, 5000),
+        emerging_size=_int(form.get("scan_emerging_size"), current.emerging_size, 0, 200),
     )
 
 
@@ -239,12 +247,14 @@ class ScanResult:
     with_fundamentals: int = 0
     skipped_short_history: int = 0
     shortlist: list[str] = field(default_factory=list)
+    #: Emerging-lens candidates that get full research (see ``emerging_symbols``).
+    emerging: list[str] = field(default_factory=list)
 
     def as_dict(self) -> dict:
         return {"scan_date": self.scan_date.isoformat(), "universe": self.universe,
                 "scored": self.scored, "with_fundamentals": self.with_fundamentals,
                 "skipped_short_history": self.skipped_short_history,
-                "shortlist": self.shortlist}
+                "shortlist": self.shortlist, "emerging": self.emerging}
 
 
 def _latest_fundamentals(session: Session) -> dict[int, Fundamentals]:
@@ -264,14 +274,18 @@ def _median(values: list[Decimal]) -> Decimal | None:
     return values[mid] if len(values) % 2 else (values[mid - 1] + values[mid]) / D("2")
 
 
-def _closes(session: Session, ticker_id: int, since: dt.date) -> list[Decimal]:
+def _bars(session: Session, ticker_id: int, since: dt.date) -> Bars:
+    """Closes plus the high/low/volume the emerging lens needs, oldest first."""
     rows = session.execute(
-        select(PriceHistory.adj_close, PriceHistory.close)
-        .where(PriceHistory.ticker_id == ticker_id, PriceHistory.date >= since)
+        select(PriceHistory.adj_close, PriceHistory.close, PriceHistory.high,
+               PriceHistory.low, PriceHistory.volume)
+        .where(PriceHistory.ticker_id == ticker_id, PriceHistory.date >= since,
+               PriceHistory.close.isnot(None))
         .order_by(PriceHistory.date)
     ).all()
-    return [r.adj_close if r.adj_close is not None else r.close
-            for r in rows if r.close is not None]
+    return Bars(closes=[r.adj_close if r.adj_close is not None else r.close for r in rows],
+                raw_closes=[r.close for r in rows], highs=[r.high for r in rows],
+                lows=[r.low for r in rows], volumes=[r.volume for r in rows])
 
 
 def score_ticker(ticker: Ticker, closes: list[Decimal], fund: Fundamentals | None,
@@ -323,31 +337,55 @@ def run_scan(session: Session, *, today: dt.date | None = None,
     since = today - dt.timedelta(days=SCAN_LOOKBACK_DAYS)
 
     scored: list[tuple[Ticker, Decimal, dict, bool]] = []
+    lens: dict[int, dict] = {}  # ticker_id -> emerging.signals(...)
     for index, ticker in enumerate(tickers, start=1):
         if progress is not None and (index == 1 or index % 50 == 0):
             progress("scanning", index - 1, len(tickers), ticker.symbol)
-        outcome = score_ticker(ticker, _closes(session, ticker.id, since),
-                               funds.get(ticker.id), sector_pe.get(ticker.sector or ""),
-                               weights)
+        bars = _bars(session, ticker.id, since)
+        fund = funds.get(ticker.id)
+        outcome = score_ticker(ticker, bars.closes, fund,
+                               sector_pe.get(ticker.sector or ""), weights)
         if outcome is None:
             result.skipped_short_history += 1
             continue
         scored.append((ticker, *outcome))
+        sig = emerging.signals(bars, revenue_growth=fund.revenue_growth_yoy if fund else None,
+                               eps_growth=fund.eps_growth_yoy if fund else None,
+                               market_cap=ticker.market_cap or (fund.market_cap if fund else None))
+        if sig is not None:
+            lens[ticker.id] = sig
+
+    # Emerging lens: relative strength is a percentile of the whole scan, so
+    # it can only be scored once every stock's signals are in.
+    rs = emerging.percentiles({tid: s["rs_raw"] for tid, s in lens.items()
+                               if s["rs_raw"] is not None})
+    lens_scores: dict[int, tuple[Decimal, dict]] = {}
+    for tid, sig in lens.items():
+        points, reasons = emerging.score(sig, rs.get(tid))
+        lens_scores[tid] = (points, emerging.stored(sig, rs.get(tid), reasons))
+    lens_rank = {tid: rank for rank, tid in enumerate(
+        sorted(lens_scores, key=lambda t: -lens_scores[t][0]), start=1)}
 
     scored.sort(key=lambda row: (not row[3], -row[1], row[0].symbol))
     session.execute(delete(ScanScore).where(
         (ScanScore.scan_date == today)
         | (ScanScore.scan_date < today - dt.timedelta(days=KEEP_SCANS_DAYS))))
     for rank, (ticker, score, blocks, has_fund) in enumerate(scored, start=1):
+        points, detail = lens_scores.get(ticker.id, (None, None))
         session.add(ScanScore(
             ticker_id=ticker.id, scan_date=today, score=score, rank=rank,
             has_fundamentals=has_fund,
             sub_scores={k: (str(v) if v is not None else None) for k, v in blocks.items()},
+            emerging_score=points, emerging_rank=lens_rank.get(ticker.id), emerging=detail,
         ))
     session.flush()
     result.scored = len(scored)
     result.with_fundamentals = sum(1 for row in scored if row[3])
     result.shortlist = [row[0].symbol for row in scored[:size]]
+    emerging_size = load_scan_config(session).emerging_size
+    by_id = {t.id: t.symbol for t, *_ in scored}
+    result.emerging = [by_id[tid] for tid in sorted(lens_rank, key=lens_rank.get)
+                       if lens_scores[tid][0] >= emerging.SHORTLIST_MIN_SCORE][:emerging_size]
     return result
 
 
@@ -365,3 +403,43 @@ def shortlist_symbols(session: Session, size: int | None = None) -> list[str]:
         select(Ticker.symbol).join(ScanScore, ScanScore.ticker_id == Ticker.id)
         .where(ScanScore.scan_date == scan_date, ScanScore.rank <= size)
         .order_by(ScanScore.rank)))
+
+
+def emerging_symbols(session: Session, size: int | None = None) -> list[str]:
+    """The emerging lens's shortlist from the latest scan: its top ``size``
+    candidates scoring at least ``emerging.SHORTLIST_MIN_SCORE``."""
+    scan_date = latest_scan_date(session)
+    if scan_date is None:
+        return []
+    size = load_scan_config(session).emerging_size if size is None else size
+    if size <= 0:
+        return []
+    return list(session.scalars(
+        select(Ticker.symbol).join(ScanScore, ScanScore.ticker_id == Ticker.id)
+        .where(ScanScore.scan_date == scan_date, ScanScore.emerging_rank.isnot(None),
+               ScanScore.emerging_score >= emerging.SHORTLIST_MIN_SCORE)
+        .order_by(ScanScore.emerging_rank).limit(size)))
+
+
+def latest_emerging(session: Session, ticker_id: int) -> ScanScore | None:
+    """This stock's row in the latest scan, if the lens scored it."""
+    scan_date = latest_scan_date(session)
+    if scan_date is None:
+        return None
+    return session.scalar(select(ScanScore).where(
+        ScanScore.scan_date == scan_date, ScanScore.ticker_id == ticker_id,
+        ScanScore.emerging_score.isnot(None)))
+
+
+def emerging_candidates(session: Session, limit: int = 10) -> list[tuple[ScanScore, Ticker]]:
+    """The latest scan's strongest emerging-lens stocks (score >= the
+    shortlist bar), best first - the dashboard's "early movers" list."""
+    scan_date = latest_scan_date(session)
+    if scan_date is None:
+        return []
+    return list(session.execute(
+        select(ScanScore, Ticker).join(Ticker, Ticker.id == ScanScore.ticker_id)
+        .where(ScanScore.scan_date == scan_date, ScanScore.emerging_rank.isnot(None),
+               ScanScore.emerging_score >= emerging.SHORTLIST_MIN_SCORE)
+        .order_by(ScanScore.emerging_rank).limit(limit)).tuples())
+

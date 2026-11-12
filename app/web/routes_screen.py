@@ -1,9 +1,10 @@
 """Screener page: the discovery scan over the whole US-listed universe.
 
 Shows the latest ``scan_scores`` in rank order, which names made the
-shortlist (and so got the full fetch + report + AI), and the full report's
-verdict where one exists.  Filters: symbol/name, sector, size band, held,
-shortlist only; sortable by any sub-score.
+shortlist (and so got the full fetch + report + AI), the emerging-lens score
+(``app/research/emerging.py``) and the full report's verdict where one
+exists.  Filters: symbol/name, sector, size band, held, shortlist only,
+emerging candidates only; sortable by any sub-score or the lens.
 """
 
 from __future__ import annotations
@@ -17,6 +18,7 @@ from app.background import runner
 from app.db.base import session_scope
 from app.db.models import ResearchReport, ScanScore, Ticker
 from app.jobs import run_screen_only
+from app.research import emerging
 from app.research.scan import latest_scan_date, load_scan_config, universe_info
 from app.web.common import DISCLAIMER, templates
 from app.web.routes_jobs import job_status_response
@@ -29,7 +31,7 @@ BLOCKS = ("value", "momentum", "quality", "risk")
 CAP_BANDS = (("small", "small cap (< $2B)", Decimal("2e9")),
              ("mid", "mid cap ($2B–$10B)", Decimal("10e9")),
              ("large", "large cap (≥ $10B)", None))
-SORTS = ("rank",) + BLOCKS
+SORTS = ("rank", "emerging") + BLOCKS
 PAGE_ROWS = 200
 
 
@@ -76,6 +78,9 @@ def screen_page(request: Request, sector: str | None = None, q: str | None = Non
         table = []
         for scan, ticker in rows:
             shortlisted = scan.rank is not None and scan.rank <= config.shortlist_size
+            lens_pick = (scan.emerging_rank is not None and scan.emerging_score is not None
+                         and scan.emerging_score >= emerging.SHORTLIST_MIN_SCORE
+                         and scan.emerging_rank <= config.emerging_size)
             if sector and ticker.sector != sector:
                 continue
             if needle and needle not in ticker.symbol and needle not in (ticker.name or "").upper():
@@ -88,13 +93,20 @@ def screen_page(request: Request, sector: str | None = None, q: str | None = Non
                 continue
             if view == "shortlist" and not shortlisted:
                 continue
+            if view == "emerging" and not lens_pick:
+                continue
             subs = {name: (Decimal(scan.sub_scores[name])
                            if scan.sub_scores.get(name) is not None else None)
                     for name in BLOCKS}
             table.append({"scan": scan, "ticker": ticker, "subs": subs,
-                          "shortlisted": shortlisted, "cap": cap_text(ticker.market_cap),
+                          "shortlisted": shortlisted, "lens_pick": lens_pick,
+                          "reasons": (scan.emerging or {}).get("reasons", []),
+                          "cap": cap_text(ticker.market_cap),
                           "held": holdings.get(ticker.id)})
-        if sort != "rank":
+        if sort == "emerging":
+            table.sort(key=lambda r: (r["scan"].emerging_score is None,
+                                      -(r["scan"].emerging_score or 0)))
+        elif sort != "rank":
             table.sort(key=lambda r: (r["subs"][sort] is None, -(r["subs"][sort] or 0)))
         matched = len(table)
         if not all:

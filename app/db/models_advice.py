@@ -83,6 +83,14 @@ class ScanScore(Base):
     #: every name that has them.
     has_fundamentals: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     rank: Mapped[int | None] = mapped_column(Integer)
+    #: Emerging-opportunity lens (``app/research/emerging.py``): points out of
+    #: 100 for early-move footprints (relative strength, breakout, volume,
+    #: trend).  NULL when the stock has too little history for the lens.
+    emerging_score: Mapped[Decimal | None] = mapped_column(RATIO)
+    #: 1 = strongest emerging candidate in this scan; NULL when unscored.
+    emerging_rank: Mapped[int | None] = mapped_column(Integer)
+    #: {"reasons": [...], "rs_percentile": "94.0", "breakout": true, ...}
+    emerging: Mapped[dict | None] = mapped_column(JSON)
     created_at: Mapped[dt.datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

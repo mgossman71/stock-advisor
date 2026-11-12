@@ -138,6 +138,49 @@ by sector, size band (small < $2B, mid, large ≥ $10B), held, and shortlist.
 fundamentals per night, all without a restart. `python -m app.cli scan
 --top 25` prints the ranking from stored data.
 
+### Emerging opportunities (early movers)
+
+The shortlist's composite score favours established, reasonably priced
+companies. A stock at the start of a big run usually scores *badly* on it,
+because it looks expensive and volatile. So the same nightly scan also runs
+an **emerging-opportunity lens** (`app/research/emerging.py`) over every
+stock. It is plain arithmetic on stored daily prices and volume: no network
+calls and no AI, so it costs a couple of minutes for ~3,000 stocks. Points
+out of 100:
+
+| Signal | Points |
+|---|---|
+| Relative strength: weighted 3/6/9/12-month return (3m doubled) as a percentile of the whole scan | up to 30 |
+| Uptrend: price > 50d > 150d > 200d average, 200d rising | 15 |
+| Within 5% of the 52-week high (5 pts within 15%) | 10 |
+| Breakout above the prior 20-day high on ≥ 1.5× average volume | 10 |
+| Volume surge: 10-day vs prior 50-day average ≥ 2× (5 pts at 1.5×) | 8 |
+| Accumulation: up-day vs down-day volume over 50 days ≥ 1.6 (6 pts at 1.3) | 10 |
+| Tight base: the 15 days before the last week trade in ≤ half the prior range | 5 |
+| Accelerating: the last month is beating the 3-month pace | 5 |
+| Revenue / EPS growth ≥ 25% a year (each, when known) | 5 + 5 |
+| Size tilt: small cap < $2B / mid cap < $10B | 5 / 3 |
+| More than 25% above the 50-day average ("may be late") | −10 |
+| Below the 200-day average | −10 |
+
+The top `emerging` candidates (default 10, Settings → Stock discovery; 0 =
+off) that score ≥ 55 get the same full research as the shortlist. The AI
+analyst gets their signals and is asked whether a real catalyst is behind
+the move, or whether it's noise or already late. A candidate scoring ≥ 70
+whose full report doesn't object becomes an **`emerging-v1` call**:
+- **Veto:** with the AI on, its stance must be bullish; on rules alone, the
+  report just mustn't be bearish.
+- **Levels:** long at the stored close, stop −8%, target +25%. Breakouts that
+  fail tend to fail fast.
+- **Expiry:** short horizon, so it expires after 120 days if it touches
+  neither level.
+
+These calls are stamped `emerging-v1` (or `emerging-v1+llm:<model>`) and
+graded like every other call. The **Recommendations** lens filter and the
+dashboard's **Early movers** panel show their own track record, so the lens
+has to earn trust. The points are a ranking of where to look first, not a
+forecast: plenty of breakouts fail.
+
 **Auto-refresh** (Settings → Auto-refresh, off by default) gives each job
 its own timer: prices only (every 5 min to 12 h) and full refresh (every
 1 h to 24 h). Each can be limited to US market hours (Mon–Fri
@@ -299,7 +342,7 @@ pages — a call with an unfinished window is *not graded*, not "0".
 ## Tests
 
 ```
-make test   # 307 tests, <4s, no network
+make test   # 387 tests, <4s, no network
 ```
 
 Pinned invariants: P&L math (incl. shorts + borrow), scoring thresholds

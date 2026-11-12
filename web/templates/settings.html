@@ -104,6 +104,8 @@
         value="{{ (scan.min_dollar_volume / 1000000).normalize() }}">M a day</label>
       <label>shortlist <input name="scan_shortlist_size" size="3" inputmode="numeric"
         value="{{ scan.shortlist_size }}"> stocks</label>
+      <label>emerging <input name="scan_emerging_size" size="3" inputmode="numeric"
+        value="{{ scan.emerging_size }}"> stocks</label>
       <label>fundamentals <input name="scan_fundamentals_per_night" size="4" inputmode="numeric"
         value="{{ scan.fundamentals_per_night }}"> a night</label>
       <button class="btn" type="submit">Save</button>
@@ -116,6 +118,9 @@
       weekly, and on the next full refresh after you change a floor.
       The top <b>shortlist</b> stocks by scan score, plus everything you hold or watch, then get the
       full research: news, analyst actions, earnings, a full report and the AI analyst, if it's on.
+      <b>Emerging</b>: the top early-movers from the emerging-opportunity lens (relative strength,
+      breakouts, volume surges, trend; no AI) also get full research, and the AI judges whether a
+      real catalyst is behind the move. 0 turns that off.
       A bigger shortlist costs more AI time. See the <a href="/screen">Screener</a>.</p>
   </div>
   <div class="panel">

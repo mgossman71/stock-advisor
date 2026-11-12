@@ -37,6 +37,8 @@ from app.db.models import (
 D = Decimal
 WINDOWS = (30, 90, 180)
 EXPIRE_AFTER_DAYS = 730
+#: Short-horizon calls (the emerging lens's breakouts) are stale much sooner.
+EXPIRE_AFTER_DAYS_SHORT = 120
 
 
 def _close_on_or_before(session: Session, ticker_id: int, day: dt.date) -> Decimal | None:
@@ -150,7 +152,8 @@ def update_statuses(session: Session, *, today: dt.date | None = None) -> dict[s
             rec.status, rec.closed_at = "hit_target", dt.datetime(
                 target_hit.year, target_hit.month, target_hit.day, tzinfo=dt.timezone.utc)
             counts["hit_target"] += 1
-        elif (today - rec.generated_at.date()).days > EXPIRE_AFTER_DAYS:
+        elif (today - rec.generated_at.date()).days > (
+                EXPIRE_AFTER_DAYS_SHORT if rec.horizon == "short" else EXPIRE_AFTER_DAYS):
             rec.status, rec.closed_at = "expired", dt.datetime(
                 today.year, today.month, today.day, tzinfo=dt.timezone.utc)
             counts["expired"] += 1
@@ -190,14 +193,33 @@ class Scoreboard:
         return out
 
 
-def scoreboard(session: Session) -> Scoreboard:
-    """Per-ticker grading table for the recommendations page."""
-    rows = session.execute(
+#: Scoreboard lenses: which engines' calls to grade together.
+LENSES = ("emerging", "core")
+
+
+def lens_filter(lens: str | None):
+    """SQL condition on ``engine_version`` for a lens (None = everything):
+    ``emerging`` = the emerging-opportunity calls, ``core`` = the rest."""
+    if lens == "emerging":
+        return Recommendation.engine_version.like("emerging%")
+    if lens == "core":
+        return Recommendation.engine_version.not_like("emerging%")
+    return None
+
+
+def scoreboard(session: Session, lens: str | None = None) -> Scoreboard:
+    """Per-ticker grading table for the recommendations page, optionally for
+    one lens so the emerging calls can prove (or disprove) themselves."""
+    query = (
         select(Recommendation, RecommendationOutcome, Ticker.symbol)
         .join(RecommendationOutcome,
               RecommendationOutcome.recommendation_id == Recommendation.id)
         .join(Ticker, Ticker.id == Recommendation.ticker_id)
-    ).all()
+    )
+    condition = lens_filter(lens)
+    if condition is not None:
+        query = query.where(condition)
+    rows = session.execute(query).all()
     per_symbol: list[dict] = []
     for rec, outcome, symbol in rows:
         entry: dict = {"symbol": symbol, "direction": rec.direction,

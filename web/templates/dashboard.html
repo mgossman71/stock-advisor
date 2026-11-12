@@ -84,6 +84,58 @@
 </div>
 
 <div class="panels">
+  <div class="panel" style="grid-column: 1 / -1" id="early-movers">
+    <h2>Early movers <span class="muted">emerging-opportunity lens: stocks showing the footprints of an early run</span></h2>
+    <div class="tablewrap">
+    <table class="wide cards">
+      <tr class="head"><th class="num">#</th><th>Ticker</th><th class="num">Lens</th><th>Why it's flagged</th>
+          <th class="num">Last</th><th>Call</th><th class="actions">Actions</th></tr>
+      {% for m in early.rows %}
+      <tr>
+        <td class="num muted" data-label="#">{{ m.rank }}</td>
+        <td data-label="Ticker"><a href="/research/{{ m.symbol }}">{{ m.symbol }}</a>
+          <span class="muted">{{ m.name or "" }}</span></td>
+        <td class="num" data-label="Lens">{{ m.score|round(0)|int }}</td>
+        <td data-label="Why it's flagged">
+          <details class="rationale"><summary>{{ m.reasons[:3]|join("; ") }}</summary>
+            <div><ul>{% for r in m.reasons %}<li>{{ r }}</li>{% endfor %}</ul></div></details></td>
+        <td class="num" data-label="Last">{{ m.last|price if m.last is not none else "—" }}
+          <span class="muted" style="font-size:.75rem">{{ m.last_date or "" }}</span></td>
+        <td data-label="Call">
+          {% if m.call %}<span class="pill bullish">LONG</span> stop {{ m.call.stop_price|price }} · target {{ m.call.target_price|price }}
+          {% elif m.researched %}<span class="muted">researched; no call yet</span>
+          {% else %}<span class="muted">scan only</span>{% endif %}</td>
+        <td class="actions">
+          <div class="row-actions">
+            {% if m.call %}
+            <a class="btn" href="/portfolio?prefill={{ m.call.id }}" title="place a virtual order in the paper account - no real money">simulate</a>
+            <a class="btn" href="/investments?rec={{ m.call.id }}" title="record a purchase you actually made with real money - tracked with gain/loss and estimated tax">I bought it</a>
+            {% else %}
+            <form hx-post="/research/{{ m.symbol }}/run" style="display:inline">
+              <button class="btn secondary" type="submit">Research now</button></form>
+            {% endif %}
+          </div>
+        </td>
+      </tr>
+      {% else %}
+      <tr><td colspan="7" class="muted">No early movers yet — the lens runs with the nightly scan (or “Re-scan stored data” on the Screener).</td></tr>
+      {% endfor %}
+    </table>
+    </div>
+    <p class="muted" style="margin-top:.5rem">Found by math on price and volume across every scanned stock
+      (no AI): relative strength vs the market, breakouts to new highs on heavy volume, accumulation,
+      tight bases, accelerating momentum, fast growth. The top {{ early.researched }} get full research,
+      with the AI analyst judging whether a real catalyst is behind the move. Calls from this lens are
+      short-term: stop −8%, target +25%.
+      <b>Track record so far:</b>
+      {% set w = emerging_board.get(30) %}
+      {% if w and w.graded %}{{ w.graded }} calls graded at 30 days, {{ w.hit_rate_pct }}% beat the market,
+        average alpha {{ w.avg_alpha_pct }}%.
+      {% else %}none graded yet (calls are graded 30 days after they're made). Paper-trade them first.{% endif %}</p>
+  </div>
+</div>
+
+<div class="panels">
   <div class="panel">
     <h2>Scoreboard (self-graded)</h2>
     <table>

@@ -21,6 +21,11 @@
     <option value="yes" {{ 'selected' if held == 'yes' }}>only what I hold</option>
     <option value="no" {{ 'selected' if held == 'no' }}>only what I don't hold</option>
   </select>
+  <select name="lens">
+    <option value="">every lens</option>
+    <option value="emerging" {{ 'selected' if lens == 'emerging' }}>emerging opportunities</option>
+    <option value="core" {{ 'selected' if lens == 'core' }}>core research</option>
+  </select>
   <select name="sort">
     <option value="best" {{ 'selected' if sort == 'best' }}>best first</option>
     <option value="recent" {{ 'selected' if sort == 'recent' }}>newest first</option>
@@ -29,7 +34,7 @@
 </form>
 
 <div class="panel" style="margin-top:1rem">
-  <h2>Self-grading scoreboard</h2>
+  <h2>Self-grading scoreboard{% if lens == 'emerging' %} <span class="muted">emerging-opportunity calls only</span>{% elif lens == 'core' %} <span class="muted">core research calls only</span>{% endif %}</h2>
   <table>
     <tr><th>Window</th><th class="num">Graded</th><th class="num">Hit rate %</th>
         <th class="num">Avg α vs {{ benchmark }}</th><th class="num">Avg outcome %</th></tr>

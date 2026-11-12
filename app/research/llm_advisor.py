@@ -38,11 +38,13 @@ from app.db.models import (
     Ticker,
 )
 from app.db.types import PCT
+from app.research import emerging
 from app.research.engine import AdvisorEngine, RuleBasedAdvisor
 from app.research.llm import (
     LLMClient, LLMConfig, LLMError, LLMUnreachable, extract_json, load_llm_config,
 )
 from app.research.report import build_report, closes_with_dates
+from app.research.scan import latest_emerging
 from app.trading.orders import latest_price
 
 D = Decimal
@@ -68,6 +70,12 @@ is a plain ratio. Prices are in USD.
 disagree, but say why in the summary.
 - Weigh valuation against growth and quality, trend and momentum against \
 mean-reversion risk, and analyst/news flow against what is already priced in.
+- If emerging_signals is present, a breakout/momentum screen flagged this \
+stock as a possible early-stage move. Judge whether the news, earnings and \
+analyst actions show a real catalyst behind it (new product, earnings \
+acceleration, upgrades, sector tailwind) or whether it looks like noise, a \
+one-off spike or a move that is already late. A strong, early move with a \
+real catalyst can justify bullish even when valuation looks stretched.
 - Recommend "none" unless the evidence gives a clear, specific edge over the \
 next 1-6 months. Most stocks on most days deserve "none".
 - "long" requires stance bullish; "short" requires stance bearish.
@@ -280,7 +288,18 @@ def build_dossier(session: Session, report: ResearchReport) -> dict:
         ],
         "next_earnings": {"date": upcoming.event_date, "eps_estimate": upcoming.eps_estimate}
         if upcoming else None,
+        # Present only for stocks the emerging lens scored strongly enough
+        # to shortlist (see app/research/emerging.py).
+        "emerging_signals": _emerging_signals(session, ticker.id),
     }
+
+
+def _emerging_signals(session: Session, ticker_id: int) -> dict | None:
+    row = latest_emerging(session, ticker_id)
+    if row is None or row.emerging_score < emerging.SHORTLIST_MIN_SCORE:
+        return None
+    return {"lens_score": row.emerging_score, "lens_rank": row.emerging_rank,
+            **(row.emerging or {})}
 
 
 # --------------------------------------------------------------- validation
