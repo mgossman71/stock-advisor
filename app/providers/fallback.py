@@ -65,9 +65,11 @@ class FallbackProvider(MarketDataProvider):
             except Exception as exc:  # a broken provider must not sink the chain
                 errors.append((provider.name, f"{type(exc).__name__}: {exc}"))
                 continue
-            # A quote and a dividend list may legitimately be empty (a stock
-            # that pays nothing); anything else empty means "try the next".
-            if result.ok and (result.data or capability in ("quote", "dividends")):
+            # A quote, a dividend list and an earnings-calendar day may
+            # legitimately be empty (a stock that pays nothing, a day nobody
+            # reported); anything else empty means "try the next".
+            if result.ok and (result.data
+                              or capability in ("quote", "dividends", "earnings_calendar")):
                 # Failures along the way are kept: "served by nasdaq after
                 # yfinance failed" is exactly what you want when a number looks
                 # different from yesterday's.
@@ -110,6 +112,10 @@ class FallbackProvider(MarketDataProvider):
     def get_dividends(self, symbol: str, start: dt.date, end: dt.date, *,
                       asset_class: Side = "stock") -> ProviderResult:
         return self._resolve("dividends", symbol, lambda p: p.get_dividends(symbol, start, end, asset_class=asset_class))
+
+    def get_earnings_calendar(self, day: dt.date) -> ProviderResult:
+        return self._resolve("earnings_calendar", day.isoformat(),
+                             lambda p: p.get_earnings_calendar(day))
 
     def get_universe(self, kind: str = "sp500") -> ProviderResult:
         return self._resolve("universe", kind, lambda p: p.get_universe(kind))

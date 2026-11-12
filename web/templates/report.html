@@ -40,6 +40,10 @@
     <h3>Rules engine <span class="muted">({{ report.model_or_rule_version }})</span></h3>
     {% if report.payload_json.llm_error %}
     <p class="neg">AI analysis failed, so this is the rules report: {{ report.payload_json.llm_error }}</p>
+    {% elif report.payload_json.ai_skipped == "budget" %}
+    <p class="muted">The nightly AI budget ran out before this stock's turn, so this is the rules
+      report. “Run new research” above gets the AI view now; the budget is under
+      <a href="/settings">Settings → AI analyst</a>.</p>
     {% else %}
     <p class="muted">No AI analyst configured — set one up under <a href="/settings">Settings</a>.</p>
     {% endif %}

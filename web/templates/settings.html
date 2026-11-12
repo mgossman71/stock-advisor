@@ -23,6 +23,8 @@
       <label>timeout (s) <input name="llm_timeout_seconds" value="{{ llm.timeout_seconds }}" style="width:4rem"></label>
       <label><input type="checkbox" name="llm_use_in_screen" value="1" {% if llm.use_in_screen %}checked{% endif %}>
         also in the nightly screen</label>
+      <label>AI budget <input name="llm_ai_minutes_per_night" value="{{ llm.ai_minutes_per_night }}"
+        inputmode="numeric" style="width:4rem"> min a night</label>
       <button class="btn" type="submit">Save</button>
       <button class="btn secondary" type="button" hx-post="/settings/llm/test"
         hx-include="#llm-form" hx-target="#llm-test">Test connection</button>
@@ -34,9 +36,11 @@
       defaults; if the model is unreachable or replies badly, the rules engine is used and the report says so.
       Ollama: <code>http://localhost:11434/v1</code> · LM Studio: <code>http://localhost:1234/v1</code> ·
       from the Docker container use <code>host.docker.internal</code> instead of <code>localhost</code>.
-      The nightly screen makes one model call per shortlisted stock (the top {{ scan.shortlist_size }}
-      of the scan, plus what you hold or watch), never one per stock in the universe.
-      Untick it if your hardware is slow.</p>
+      The nightly screen spends at most the <b>AI budget</b> on model calls, in priority order:
+      what you hold or watch, then early movers with the strongest catalysts, then the shortlist.
+      A stock whose AI report is under a week old and whose situation hasn't changed (price within
+      5%, no new earnings or analyst action) keeps that report, which frees the budget to read new
+      names. Stocks past the budget still get the rules report. Untick it if your hardware is slow.</p>
   </div>
   <div class="panel" id="autorefresh">
     <h2>Auto-refresh <span class="muted">(each refresh job on its own timer)</span></h2>
@@ -113,14 +117,18 @@
     <p class="muted">
       {% if universe.source %}Stock list: {{ universe.count or '?' }} stocks from <i>{{ universe.source }}</i>{% if universe.refreshed_at %}, refreshed {{ universe.refreshed_at|as_of }}{% else %}. The live list hasn't loaded yet, so the next full refresh will retry{% endif %}.
       {% else %}The stock list loads on the next full refresh.{% endif %}
+      The default market-cap floor is $50M, which includes micro caps (under $300M: high risk,
+      marked "micro" everywhere). If you saved this form before, your saved floor still applies, so
+      lower it here to include them.
       Every NYSE/Nasdaq common stock above these floors is scanned each night from cheap data:
       prices, plus fundamentals refreshed on a rotation, stalest first. The list is rebuilt
       weekly, and on the next full refresh after you change a floor.
       The top <b>shortlist</b> stocks by scan score, plus everything you hold or watch, then get the
       full research: news, analyst actions, earnings, a full report and the AI analyst, if it's on.
-      <b>Emerging</b>: the top early-movers from the emerging-opportunity lens (relative strength,
-      breakouts, volume surges, trend; no AI) also get full research, and the AI judges whether a
-      real catalyst is behind the move. 0 turns that off.
+      <b>Emerging</b>: the top early movers from the emerging-opportunity lens (relative strength,
+      breakouts, volume, earnings beats; no AI) also get full research. They're ranked again by their
+      catalysts (analyst upgrades, news), and the AI reads them in that order within its time budget.
+      0 turns that off.
       A bigger shortlist costs more AI time. See the <a href="/screen">Screener</a>.</p>
   </div>
   <div class="panel">

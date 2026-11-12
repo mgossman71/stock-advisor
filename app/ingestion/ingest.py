@@ -28,7 +28,7 @@ from dataclasses import dataclass, field
 from decimal import Decimal
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.db.models import (
@@ -447,25 +447,94 @@ def ingest_earnings(
 
     ticker = ensure_ticker(session, symbol)
     for event in result.data:
-        row = session.scalar(
-            select(EarningsEvent).where(
-                EarningsEvent.ticker_id == ticker.id,
-                EarningsEvent.event_date == event.event_date,
-            )
-        ) or EarningsEvent(ticker_id=ticker.id, event_date=event.event_date)
-        for attribute in (
-            "eps_estimate", "eps_actual", "revenue_estimate", "revenue_actual", "surprise_pct"
-        ):
-            value = getattr(event, attribute, None)
-            if value is not None:
-                setattr(row, attribute, value)
-        row.status = event.status
-        row.source = event.source
-        row.fetched_at = dt.datetime.now(dt.timezone.utc)
-        session.add(row)
+        _upsert_earnings(session, ticker.id, event)
         stats.written += 1
     session.flush()
     log_fetch(session, provider=result.provider, endpoint=result.endpoint, ticker=symbol,
+              status="ok", row_count=stats.written)
+    return stats
+
+
+def _upsert_earnings(session: Session, ticker_id: int, event) -> None:
+    """One earnings row per (ticker, date); a known value never becomes None."""
+    row = session.scalar(
+        select(EarningsEvent).where(
+            EarningsEvent.ticker_id == ticker_id,
+            EarningsEvent.event_date == event.event_date,
+        )
+    ) or EarningsEvent(ticker_id=ticker_id, event_date=event.event_date)
+    for attribute in (
+        "eps_estimate", "eps_actual", "revenue_estimate", "revenue_actual", "surprise_pct"
+    ):
+        value = getattr(event, attribute, None)
+        if value is not None:
+            setattr(row, attribute, value)
+    if row.status != "reported":  # a calendar "scheduled" never undoes a report
+        row.status = event.status
+    row.source = event.source
+    row.fetched_at = dt.datetime.now(dt.timezone.utc)
+    session.add(row)
+
+
+#: The market-wide earnings calendar: how far back the first fill reaches,
+#: how far ahead upcoming dates are kept, and when a past day counts as final
+#: (late filers and restated actuals appear a day or two after the date).
+CALENDAR_LOOKBACK_DAYS = 45
+CALENDAR_AHEAD_DAYS = 10
+CALENDAR_SETTLE_DAYS = 3
+_CALENDAR_ENDPOINT = "earnings_calendar({})"
+
+
+def earnings_calendar_days(session: Session, today: dt.date) -> list[dt.date]:
+    """Weekdays to fetch: past days not yet fetched *after* they settled, plus
+    the upcoming window.  ~11 calls a night once the backfill is done."""
+    settled: set[str] = set()
+    for endpoint, last in session.execute(
+        select(DataFetchLog.endpoint, func.max(DataFetchLog.fetched_at))
+        .where(DataFetchLog.endpoint.like("earnings_calendar(%"),
+               DataFetchLog.status == "ok")
+        .group_by(DataFetchLog.endpoint)
+    ):
+        try:
+            day = dt.date.fromisoformat(endpoint[len("earnings_calendar("):-1])
+        except ValueError:
+            continue
+        if last is not None and last.date() >= day + dt.timedelta(days=CALENDAR_SETTLE_DAYS):
+            settled.add(day.isoformat())
+    days = []
+    day = today - dt.timedelta(days=CALENDAR_LOOKBACK_DAYS)
+    while day <= today + dt.timedelta(days=CALENDAR_AHEAD_DAYS):
+        if day.weekday() < 5 and day.isoformat() not in settled:
+            days.append(day)
+        day += dt.timedelta(days=1)
+    return days
+
+
+def ingest_earnings_calendar(session: Session, provider: MarketDataProvider,
+                             day: dt.date) -> IngestStats:
+    """Upsert one calendar day's reporters - only for tickers we already
+    track (the calendar lists every US company; it must not grow the DB)."""
+    endpoint = _CALENDAR_ENDPOINT.format(day.isoformat())
+    stats = IngestStats(symbol=endpoint)
+    result = provider.get_earnings_calendar(day)
+    if not result.ok:
+        log_fetch(session, provider=provider.name, endpoint=endpoint, ticker=None,
+                  status="error", error=result.error, row_count=0)
+        stats.note(f"earnings calendar {day} unavailable: {result.error}")
+        return stats
+    stats.fetched = len(result.data)
+    known = dict(session.execute(
+        select(Ticker.symbol, Ticker.id)
+        .where(Ticker.symbol.in_([e.symbol for e in result.data]))).tuples().all())
+    for event in result.data:
+        ticker_id = known.get(event.symbol)
+        if ticker_id is None:
+            stats.skipped += 1
+            continue
+        _upsert_earnings(session, ticker_id, event)
+        stats.written += 1
+    session.flush()
+    log_fetch(session, provider=result.provider, endpoint=endpoint, ticker=None,
               status="ok", row_count=stats.written)
     return stats
 

@@ -58,6 +58,10 @@ class LLMConfig:
     timeout_seconds: int = 180
     #: Also use the model for every ticker in the nightly screen (one call each).
     use_in_screen: bool = True
+    #: Wall-clock AI time the nightly screen may spend.  Names are read in
+    #: priority order (held/watched, emerging, shortlist) until it runs out;
+    #: the rest get the rules report.  See ``screener.screen_universe``.
+    ai_minutes_per_night: int = 60
 
     @property
     def ready(self) -> bool:
@@ -75,6 +79,7 @@ KEYS = {
     "max_tokens": "llm_max_tokens",
     "timeout_seconds": "llm_timeout_seconds",
     "use_in_screen": "llm_use_in_screen",
+    "ai_minutes_per_night": "llm_ai_minutes_per_night",
 }
 
 
@@ -96,6 +101,8 @@ def load_llm_config(session: Session) -> LLMConfig:
         max_tokens=_parse_int(get("max_tokens"), default.max_tokens, 64, 32000),
         timeout_seconds=_parse_int(get("timeout_seconds"), default.timeout_seconds, 5, 1800),
         use_in_screen=get("use_in_screen") != "0",
+        ai_minutes_per_night=_parse_int(get("ai_minutes_per_night"),
+                                        default.ai_minutes_per_night, 1, 24 * 60),
     )
 
 
@@ -110,6 +117,7 @@ def save_llm_config(session: Session, config: LLMConfig) -> None:
         "max_tokens": str(config.max_tokens),
         "timeout_seconds": str(config.timeout_seconds),
         "use_in_screen": "1" if config.use_in_screen else "0",
+        "ai_minutes_per_night": str(config.ai_minutes_per_night),
     }
     now = dt.datetime.now(dt.timezone.utc)
     for field, value in values.items():
@@ -143,6 +151,8 @@ def config_from_form(form: dict, stored: LLMConfig) -> LLMConfig:
         timeout_seconds=_parse_int(form.get("llm_timeout_seconds"), stored.timeout_seconds,
                                    5, 1800),
         use_in_screen=bool(form.get("llm_use_in_screen")),
+        ai_minutes_per_night=_parse_int(form.get("llm_ai_minutes_per_night"),
+                                        stored.ai_minutes_per_night, 1, 24 * 60),
     )
 
 

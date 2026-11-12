@@ -235,6 +235,13 @@ class MarketDataProvider(ABC):
         rows means "pays nothing in range".  Unsupported by default."""
         return ProviderResult(self.name, "dividends", ok=False, error="unsupported")
 
+    def get_earnings_calendar(self, day: dt.date) -> ProviderResult:
+        """Every company that reported (or will report) on ``day``, market-wide,
+        as :class:`EarningsEvent` rows.  ``ok=True`` with no rows means nobody
+        reported that day (weekends, holidays).  Unsupported by default."""
+        return ProviderResult(self.name, f"earnings_calendar({day})", ok=False,
+                              error="unsupported")
+
     def get_universe(self, kind: str = "sp500") -> ProviderResult:
         """Constituent list for a screening universe.  Unsupported by default."""
         return ProviderResult(self.name, f"universe:{kind}", ok=False, error="unsupported")

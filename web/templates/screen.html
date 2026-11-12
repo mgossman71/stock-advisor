@@ -101,4 +101,48 @@
     ranked after every stock that has fundamentals. <b>Full report</b> = the latest
     complete research verdict, if the stock has one.</p>
 </div>
+
+<div class="panel" style="margin-top:1rem" id="backtest">
+  <h2>Emerging lens backtest <span class="muted">does the early-mover lens pick winners?</span></h2>
+  {% if backtest and not backtest.error %}
+  <p class="muted">Replayed at {{ backtest.months }} month-ends, {{ backtest.first_date }} to
+    {{ backtest.last_date }}: every stock scored with only the data available that day, then
+    what happened next vs {{ backtest.benchmark }}. Run {{ backtest.generated_at[:16]|replace("T", " ") }} UTC.</p>
+  <div class="tablewrap">
+  <table>
+    <tr><th>Group</th><th class="num">Picks</th>
+        <th class="num">Avg 1-month</th><th class="num">vs market</th><th class="num">Beat market</th>
+        <th class="num">Avg 3-month</th><th class="num">vs market</th><th class="num">Beat market</th>
+        <th class="num">+25% first</th><th class="num">−8% first</th></tr>
+    {% for key, label in [("top", "Top " ~ backtest.top_n ~ " each month"), ("85+", "Score 85+"),
+                          ("70–85", "Score 70–85"), ("55–70", "Score 55–70"), ("all", "Every stock (baseline)")] %}
+    {% set g = backtest.groups[key] %}
+    <tr>
+      <td>{{ label }}</td><td class="num">{{ g.n }}</td>
+      {% for h in [21, 63] %}
+      <td class="num">{{ g["avg_return_" ~ h ~ "d"] ~ "%" if g["avg_return_" ~ h ~ "d"] is not none else "—" }}</td>
+      {% set xs = g["avg_excess_" ~ h ~ "d"] %}
+      <td class="num {{ 'pos' if xs and xs[0] != '-' else ('neg' if xs else '') }}">{{ xs ~ "%" if xs is not none else "—" }}</td>
+      <td class="num">{{ g["beat_benchmark_" ~ h ~ "d_pct"] ~ "%" if g["beat_benchmark_" ~ h ~ "d_pct"] is not none else "—" }}</td>
+      {% endfor %}
+      <td class="num">{{ g.target_first_pct ~ "%" if g.target_first_pct is not none else "—" }}</td>
+      <td class="num">{{ g.stop_first_pct ~ "%" if g.stop_first_pct is not none else "—" }}</td>
+    </tr>
+    {% endfor %}
+  </table>
+  </div>
+  <p class="muted"><b>Read it as:</b> the lens has an edge if the top picks and higher score bands
+    beat the baseline row (every stock), consistently, at both horizons. <b>+25% first / −8% first</b>
+    = how often an emerging-v1 call's target or stop would have been hit first within 3 months.</p>
+  <ul class="muted">{% for c in backtest.caveats %}<li>{{ c }}</li>{% endfor %}</ul>
+  {% elif backtest and backtest.error %}
+  <p class="flash-bad">Last backtest: {{ backtest.error }}</p>
+  {% else %}
+  <p class="muted">Not run yet.</p>
+  {% endif %}
+  <button class="btn secondary" hx-post="/screen/backtest" hx-target="#screen-result"
+          hx-swap="innerHTML" type="button">Run lens backtest</button>
+  <span class="muted">The first run fetches about 3 years of prices for every stock, once
+    (roughly an hour); after that it takes a few minutes.</span>
+</div>
 {% endblock %}

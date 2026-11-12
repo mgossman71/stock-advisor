@@ -13,6 +13,7 @@ from app.research import indicators
 from app.research.outcomes import Scoreboard, scoreboard as build_scoreboard
 from app.research.ranking import ranked_ideas
 from app.research.report import closes_with_dates
+from app.research.emerging import is_micro
 from app.research.scan import emerging_candidates, load_scan_config
 from app.trading.orders import latest_price
 from app.trading.accounts import get_or_open_account
@@ -69,6 +70,7 @@ def _early_movers(session) -> dict:
         priced = latest_price(session, ticker.id)
         rows.append({
             "symbol": ticker.symbol, "name": ticker.name, "score": scan.emerging_score,
+            "micro": is_micro(ticker.market_cap),
             "rank": scan.emerging_rank, "reasons": (scan.emerging or {}).get("reasons", []),
             "researched": scan.emerging_rank <= config.emerging_size,
             "last": priced[0] if priced else None, "last_date": priced[1] if priced else None,

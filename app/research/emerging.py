@@ -20,9 +20,15 @@ Signals (each documented in the stock's ``reasons``):
   versus the 60 before that (quiet consolidation, the classic set-up before
   a breakout; measured before the last week so a fresh breakout still counts).
 * **Acceleration** - the last month is outpacing the 3-month rate.
+* **Earnings drift** - an EPS beat of >= 10% in the last 30 days with the
+  price still above its pre-report close (post-earnings-announcement drift,
+  one of the best-documented effects in markets).  From the market-wide
+  earnings calendar, so every stock gets it, not just the researched ones.
+  A miss of <= -10% costs points; earnings due within 10 days are noted.
 * **Growth** - revenue / EPS growth >= 25% year on year, when known.
-* **Size tilt** - small (< $2B) and mid (< $10B) caps get a few points:
-  the early, room-to-run names this lens is for (and the riskier ones).
+* **Size tilt** - micro (< $300M), small (< $2B) and mid (< $10B) caps get a
+  few points: the early, room-to-run names this lens is for (and the riskier
+  ones - micro-cap calls are labelled high risk with confidence capped).
 
 Penalties: more than 25% above the 50-day average (late - the move already
 happened), and a close below the 200-day average (no uptrend).
@@ -34,6 +40,7 @@ scoreboard as everything else, so the lens has to prove itself.
 
 from __future__ import annotations
 
+import datetime as dt
 from dataclasses import dataclass
 from decimal import Decimal
 
@@ -48,6 +55,14 @@ CALL_MIN_SCORE = D("70")
 STOP_PCT = D("0.92")      # -8 %
 TARGET_PCT = D("1.25")    # +25 %
 ENGINE_VERSION = "emerging-v1"
+#: Below this market cap a stock is a *micro cap*: it can run hardest and
+#: falls hardest; every call on one is labelled and confidence is capped.
+MICRO_CAP = D("3e8")
+MICRO_CAP_MAX_CONFIDENCE = D("65")
+
+
+def is_micro(market_cap: Decimal | None) -> bool:
+    return market_cap is not None and market_cap < MICRO_CAP
 
 
 @dataclass
@@ -61,6 +76,21 @@ class Bars:
     highs: list[Decimal | None]
     lows: list[Decimal | None]
     volumes: list[int | None]
+    #: Bar dates (needed for the earnings-drift signal; optional elsewhere).
+    dates: list[dt.date] | None = None
+
+
+@dataclass(frozen=True)
+class Earnings:
+    """The earnings facts the lens uses: latest report and the next date."""
+
+    reported_on: dt.date | None = None
+    surprise_pct: Decimal | None = None
+    next_on: dt.date | None = None
+
+
+EARNINGS_FRESH_DAYS = 30
+EARNINGS_SOON_DAYS = 10
 
 
 def _ret(closes: list[Decimal], days: int) -> Decimal | None:
@@ -88,7 +118,8 @@ def _pct(value: Decimal | None) -> str | None:
 
 def signals(bars: Bars, *, revenue_growth: Decimal | None = None,
             eps_growth: Decimal | None = None,
-            market_cap: Decimal | None = None) -> dict | None:
+            market_cap: Decimal | None = None,
+            earnings: Earnings | None = None) -> dict | None:
     """Raw metrics for one stock, or ``None`` with too little history.
 
     ``rs_raw`` is the input to the universe-wide percentile; everything else
@@ -147,6 +178,22 @@ def signals(bars: Bars, *, revenue_growth: Decimal | None = None,
     recent, before = span(n - 20, n - 5), span(n - 80, n - 20) if n >= 80 else None
     tightness = recent / before if recent is not None and before else None
 
+    # Earnings drift: judged against the last close *before* the report, so
+    # "held the gains" means the market kept what the surprise gave it.
+    as_of = bars.dates[-1] if bars.dates else None
+    surprise = days_since = held = days_to_next = None
+    if earnings is not None and as_of is not None:
+        if (earnings.reported_on is not None and earnings.surprise_pct is not None
+                and 0 <= (as_of - earnings.reported_on).days <= EARNINGS_FRESH_DAYS):
+            surprise = earnings.surprise_pct
+            days_since = (as_of - earnings.reported_on).days
+            before = [i for i, d in enumerate(bars.dates) if d < earnings.reported_on]
+            if before:
+                held = last > raw[before[-1]]
+        if earnings.next_on is not None and 0 <= (earnings.next_on - as_of).days \
+                <= EARNINGS_SOON_DAYS:
+            days_to_next = (earnings.next_on - as_of).days
+
     accel = (r["1m"] is not None and r["3m"] is not None
              and r["1m"] > 0 and r["1m"] * 3 > r["3m"])
     extension = (last / sma50 - D("1")) * D("100") if sma50 else None
@@ -158,6 +205,8 @@ def signals(bars: Bars, *, revenue_growth: Decimal | None = None,
         "above200": None if sma200 is None else last > sma200,
         "revenue_growth": revenue_growth, "eps_growth": eps_growth,
         "market_cap": market_cap,
+        "surprise": surprise, "days_since_report": days_since, "held_gains": held,
+        "days_to_earnings": days_to_next,
     }
 
 
@@ -200,6 +249,21 @@ def score(sig: dict, rs_percentile: Decimal | None) -> tuple[Decimal, list[str]]
     if sig["accel"]:
         add("5", f"momentum accelerating: +{sig['returns']['1m'].quantize(D('0.1'))}% "
                  f"in the last month")
+    surprise = sig.get("surprise")
+    if surprise is not None:
+        when = f"{sig['days_since_report']} days ago"
+        if surprise >= D("10") and sig.get("held_gains"):
+            add("10", f"beat EPS estimates by {surprise.quantize(D('1'))}% {when} "
+                      f"and held the gains")
+        elif surprise >= D("10"):
+            reasons.append(f"beat EPS estimates by {surprise.quantize(D('1'))}% {when}, "
+                           f"but the price gave the gains back")
+        elif surprise <= D("-10"):
+            points -= D("5")
+            reasons.append(f"caution: missed EPS estimates by "
+                           f"{abs(surprise).quantize(D('1'))}% {when}")
+    if sig.get("days_to_earnings") is not None:
+        reasons.append(f"note: earnings due in {sig['days_to_earnings']} days (event risk)")
     for key, label in (("revenue_growth", "revenue"), ("eps_growth", "EPS")):
         value = sig[key]
         if value is not None and value >= D("25"):
@@ -209,7 +273,9 @@ def score(sig: dict, rs_percentile: Decimal | None) -> tuple[Decimal, list[str]]
                 else f"{label} growth over 200% a year (from a low base)")
 
     cap = sig.get("market_cap")
-    if cap is not None and cap < D("2e9"):
+    if is_micro(cap):
+        add("5", "micro cap: high risk, thin trading")
+    elif cap is not None and cap < D("2e9"):
         add("5", "small cap: more room to run (and more risk)")
     elif cap is not None and cap < D("10e9"):
         add("3", "mid cap: room to run")
@@ -223,6 +289,27 @@ def score(sig: dict, rs_percentile: Decimal | None) -> tuple[Decimal, list[str]]
         points -= D("10")
         reasons.append("caution: below its 200-day average")
     return max(D("0"), min(D("100"), points)).quantize(D("0.01")), reasons
+
+
+def catalyst_points(upgrades: int, downgrades: int,
+                    news_sentiment: Decimal | None) -> tuple[Decimal, list[str]]:
+    """Second-stage points from the full fetch (no AI): analyst actions in the
+    last 30 days (upgrades + target raises vs downgrades + cuts) and mean
+    news sentiment.  Ranks the reviewed candidates for AI time."""
+    points = D("0")
+    reasons: list[str] = []
+    net = upgrades - downgrades
+    if net:
+        points += max(D("-12"), min(D("12"), D(net) * D("4")))
+        reasons.append(f"analysts: {upgrades} upgrade(s)/target raise(s), "
+                       f"{downgrades} downgrade(s)/cut(s) in 30 days")
+    if news_sentiment is not None and news_sentiment >= D("15"):
+        points += D("4")
+        reasons.append(f"news tone positive ({news_sentiment.quantize(D('1'))})")
+    elif news_sentiment is not None and news_sentiment <= D("-15"):
+        points -= D("4")
+        reasons.append(f"news tone negative ({news_sentiment.quantize(D('1'))})")
+    return points, reasons
 
 
 def percentiles(values: dict[int, Decimal]) -> dict[int, Decimal]:
@@ -254,6 +341,10 @@ def stored(sig: dict, rs_percentile: Decimal | None, reasons: list[str]) -> dict
         "revenue_growth_pct": _pct(sig["revenue_growth"]),
         "eps_growth_pct": _pct(sig["eps_growth"]),
         "market_cap": str(sig["market_cap"]) if sig.get("market_cap") is not None else None,
+        "eps_surprise_pct": _pct(sig.get("surprise")),
+        "days_since_report": sig.get("days_since_report"),
+        "held_post_earnings_gains": sig.get("held_gains"),
+        "days_to_earnings": sig.get("days_to_earnings"),
     }
 
 

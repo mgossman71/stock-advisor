@@ -97,6 +97,42 @@ def cmd_fetch(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_backtest_lens(args: argparse.Namespace) -> int:
+    """Replay the emerging lens over stored history (see app/research/backtest.py)."""
+    from app.jobs import extend_history
+    from app.research.backtest import run_backtest, save_result
+
+    settings = get_settings()
+    with session_scope() as session:
+        if not args.no_extend:
+            fetched = extend_history(session, build_provider(settings), settings,
+                                     dt.date.today(),
+                                     progress=lambda phase, done, total, sym: print(
+                                         f"\r  {phase} {done}/{total} {sym}   ", end=""))
+            print(f"\nhistory extended for {fetched} symbol(s)")
+        result = run_backtest(session, benchmark_symbol=settings.benchmark_symbol,
+                              months=args.months, top_n=args.top)
+        if "error" in result:
+            print(result["error"])
+            return 1
+        save_result(session, result)
+        session.commit()
+    print(f"{result['months']} month-ends {result['first_date']} .. {result['last_date']}, "
+          f"vs {result['benchmark']}")
+    print(f"{'group':8} {'n':>6} {'ret21':>7} {'xs21':>7} {'beat21':>7} {'ret63':>7} "
+          f"{'xs63':>7} {'beat63':>7} {'tgt1st':>7} {'stop1st':>7}")
+    for name, g in result["groups"].items():
+        label = f"top {result['top_n']}" if name == "top" else name
+        print(f"{label:8} {g['n']:>6} " + " ".join(
+            f"{(g[k] or '—'):>7}" for k in (
+                "avg_return_21d", "avg_excess_21d", "beat_benchmark_21d_pct",
+                "avg_return_63d", "avg_excess_63d", "beat_benchmark_63d_pct",
+                "target_first_pct", "stop_first_pct")))
+    for caveat in result["caveats"]:
+        print(f"  * {caveat}")
+    return 0
+
+
 def cmd_scan(args: argparse.Namespace) -> int:
     """Discovery scan over stored rows (no network), then print the top N."""
     from app.db.models import ScanScore, Ticker
@@ -432,6 +468,14 @@ def build_parser() -> argparse.ArgumentParser:
     scan = sub.add_parser("scan", help="scan-score the universe from stored data, show the top")
     scan.add_argument("--top", type=int, default=25)
     scan.set_defaults(func=cmd_scan)
+
+    backtest = sub.add_parser("backtest-lens",
+                              help="replay the emerging lens over stored history")
+    backtest.add_argument("--months", type=int, default=24)
+    backtest.add_argument("--top", type=int, default=10)
+    backtest.add_argument("--no-extend", action="store_true",
+                          help="don't fetch older history first (offline)")
+    backtest.set_defaults(func=cmd_backtest_lens)
 
     sub.add_parser("stats", help="row counts + coverage + fetch log").set_defaults(func=cmd_stats)
     sub.add_parser("providers", help="show/probe the provider chain").set_defaults(func=cmd_providers)

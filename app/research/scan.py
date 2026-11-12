@@ -31,7 +31,10 @@ from sqlalchemy.orm import Session
 
 from app.background import Progress
 from app.config import Settings, get_settings
-from app.db.models import AppSetting, Fundamentals, PriceHistory, ScanScore, Ticker
+from app.db.models import (
+    AnalystAction, AppSetting, EarningsEvent, Fundamentals, NewsItem, PriceHistory, ScanScore,
+    Ticker,
+)
 from app.research import emerging
 from app.research.emerging import Bars
 from app.research.report import price_signals
@@ -75,7 +78,7 @@ class ScanConfig:
     shortlist_size: int
     fundamentals_per_night: int
     #: Emerging-lens candidates fully researched each night (0 = off).
-    emerging_size: int = 10
+    emerging_size: int = 50
 
 
 def _decimal(raw: str | None, default: Decimal) -> Decimal:
@@ -277,15 +280,42 @@ def _median(values: list[Decimal]) -> Decimal | None:
 def _bars(session: Session, ticker_id: int, since: dt.date) -> Bars:
     """Closes plus the high/low/volume the emerging lens needs, oldest first."""
     rows = session.execute(
-        select(PriceHistory.adj_close, PriceHistory.close, PriceHistory.high,
-               PriceHistory.low, PriceHistory.volume)
+        select(PriceHistory.date, PriceHistory.adj_close, PriceHistory.close,
+               PriceHistory.high, PriceHistory.low, PriceHistory.volume)
         .where(PriceHistory.ticker_id == ticker_id, PriceHistory.date >= since,
                PriceHistory.close.isnot(None))
         .order_by(PriceHistory.date)
     ).all()
     return Bars(closes=[r.adj_close if r.adj_close is not None else r.close for r in rows],
                 raw_closes=[r.close for r in rows], highs=[r.high for r in rows],
-                lows=[r.low for r in rows], volumes=[r.volume for r in rows])
+                lows=[r.low for r in rows], volumes=[r.volume for r in rows],
+                dates=[r.date for r in rows])
+
+
+def _earnings_facts(session: Session, today: dt.date) -> dict[int, emerging.Earnings]:
+    """ticker_id -> latest report with a surprise (last ~6 weeks) and the next
+    scheduled date, in two queries for the whole universe."""
+    since = today - dt.timedelta(days=45)
+    reported: dict[int, tuple[dt.date, Decimal]] = {}
+    for ticker_id, day, surprise in session.execute(
+        select(EarningsEvent.ticker_id, EarningsEvent.event_date, EarningsEvent.surprise_pct)
+        .where(EarningsEvent.status == "reported", EarningsEvent.surprise_pct.isnot(None),
+               EarningsEvent.event_date >= since, EarningsEvent.event_date <= today)
+        .order_by(EarningsEvent.event_date)
+    ):
+        reported[ticker_id] = (day, surprise)  # ordered: the last one wins
+    upcoming: dict[int, dt.date] = {}
+    for ticker_id, day in session.execute(
+        select(EarningsEvent.ticker_id, func.min(EarningsEvent.event_date))
+        .where(EarningsEvent.status != "reported", EarningsEvent.event_date >= today)
+        .group_by(EarningsEvent.ticker_id)
+    ):
+        upcoming[ticker_id] = day
+    return {tid: emerging.Earnings(
+                reported_on=reported.get(tid, (None, None))[0],
+                surprise_pct=reported.get(tid, (None, None))[1],
+                next_on=upcoming.get(tid))
+            for tid in set(reported) | set(upcoming)}
 
 
 def score_ticker(ticker: Ticker, closes: list[Decimal], fund: Fundamentals | None,
@@ -335,6 +365,7 @@ def run_scan(session: Session, *, today: dt.date | None = None,
     sector_pe = {sector: _median(values) for sector, values in by_sector.items()}
     weights = load_weights(session)
     since = today - dt.timedelta(days=SCAN_LOOKBACK_DAYS)
+    earnings = _earnings_facts(session, today)
 
     scored: list[tuple[Ticker, Decimal, dict, bool]] = []
     lens: dict[int, dict] = {}  # ticker_id -> emerging.signals(...)
@@ -351,7 +382,8 @@ def run_scan(session: Session, *, today: dt.date | None = None,
         scored.append((ticker, *outcome))
         sig = emerging.signals(bars, revenue_growth=fund.revenue_growth_yoy if fund else None,
                                eps_growth=fund.eps_growth_yoy if fund else None,
-                               market_cap=ticker.market_cap or (fund.market_cap if fund else None))
+                               market_cap=ticker.market_cap or (fund.market_cap if fund else None),
+                               earnings=earnings.get(ticker.id))
         if sig is not None:
             lens[ticker.id] = sig
 
@@ -442,4 +474,55 @@ def emerging_candidates(session: Session, limit: int = 10) -> list[tuple[ScanSco
         .where(ScanScore.scan_date == scan_date, ScanScore.emerging_rank.isnot(None),
                ScanScore.emerging_score >= emerging.SHORTLIST_MIN_SCORE)
         .order_by(ScanScore.emerging_rank).limit(limit)).tuples())
+
+
+def confirm_emerging(session: Session, today: dt.date | None = None) -> int:
+    """Second stage for the reviewed emerging candidates, after their full
+    fetch: add catalyst points (analyst actions, news tone) to the lens score
+    as ``emerging["confirmed"]``, which orders them for AI time.  Returns how
+    many rows were updated.  Idempotent - recomputed from stored rows."""
+    today = today or dt.date.today()
+    scan_date = latest_scan_date(session)
+    symbols = emerging_symbols(session)
+    if scan_date is None or not symbols:
+        return 0
+    since = today - dt.timedelta(days=30)
+    rows = session.execute(
+        select(ScanScore, Ticker).join(Ticker, Ticker.id == ScanScore.ticker_id)
+        .where(ScanScore.scan_date == scan_date, Ticker.symbol.in_(symbols))).tuples().all()
+    for scan, ticker in rows:
+        actions = session.scalars(select(AnalystAction.action).where(
+            AnalystAction.ticker_id == ticker.id, AnalystAction.action_date >= since)).all()
+        news = session.scalar(select(func.avg(NewsItem.sentiment_score)).where(
+            NewsItem.ticker_id == ticker.id, NewsItem.sentiment_score.isnot(None),
+            NewsItem.published_at >= dt.datetime.combine(since, dt.time(),
+                                                         tzinfo=dt.timezone.utc)))
+        points, reasons = emerging.catalyst_points(
+            sum(a in ("upgrade", "target_raise") for a in actions),
+            sum(a in ("downgrade", "target_cut") for a in actions),
+            D(str(news)) if news is not None else None)
+        # Reassign (not mutate) so SQLAlchemy sees the JSON change.
+        scan.emerging = {**(scan.emerging or {}),
+                         "catalysts": {"points": str(points), "reasons": reasons},
+                         "confirmed": str(scan.emerging_score + points)}
+    session.flush()
+    return len(rows)
+
+
+def emerging_priority(session: Session) -> list[str]:
+    """Reviewed emerging candidates, best first by confirmed score (lens +
+    catalysts; plain lens score before ``confirm_emerging`` has run)."""
+    scan_date = latest_scan_date(session)
+    symbols = emerging_symbols(session)
+    if scan_date is None or not symbols:
+        return []
+    rows = session.execute(
+        select(ScanScore, Ticker.symbol).join(Ticker, Ticker.id == ScanScore.ticker_id)
+        .where(ScanScore.scan_date == scan_date, Ticker.symbol.in_(symbols))).tuples().all()
+
+    def confirmed(scan: ScanScore) -> Decimal:
+        raw = (scan.emerging or {}).get("confirmed")
+        return D(raw) if raw is not None else scan.emerging_score
+
+    return [symbol for scan, symbol in sorted(rows, key=lambda r: (-confirmed(r[0]), r[1]))]
 

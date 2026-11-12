@@ -82,3 +82,62 @@ def test_emerging_shortlist_size_is_a_setting(client):
     client.post("/settings/scan", data={"scan_emerging_size": "4"})
     with session_scope() as s:
         assert load_scan_config(s).emerging_size == 4
+
+
+def test_screener_backtest_panel_and_button(client, monkeypatch):
+    from app.research.backtest import save_result
+
+    html = client.get("/screen").text
+    assert 'id="backtest"' in html and "Not run yet." in html
+    started: list[str] = []
+    monkeypatch.setattr("app.web.routes_screen.runner.start",
+                        lambda name, job: started.append(name) or True)
+    assert client.post("/screen/backtest").status_code == 200 and started == ["backtest"]
+    group = {"n": 120, "avg_return_21d": "3.10", "avg_excess_21d": "1.90",
+             "beat_benchmark_21d_pct": "58.3", "avg_return_63d": "7.00",
+             "avg_excess_63d": "-0.50", "beat_benchmark_63d_pct": "49.0",
+             "target_first_pct": "18.0", "stop_first_pct": "41.0", "neither_first_pct": "41.0"}
+    with session_scope() as s:
+        save_result(s, {"generated_at": "2026-11-11T20:00:00+00:00", "benchmark": "^GSPC",
+                        "months": 24, "top_n": 10, "first_date": "2024-10-31",
+                        "last_date": "2026-09-30",
+                        "groups": {k: group for k in ("top", "85+", "70–85", "55–70", "all")},
+                        "by_date": [], "caveats": ["survivorship bias"]})
+        s.commit()
+    html = client.get("/screen").text
+    assert "Top 10 each month" in html and "Every stock (baseline)" in html
+    assert "1.90%" in html and "survivorship bias" in html
+
+
+def test_ai_budget_is_a_setting(client):
+    from app.research.llm import load_llm_config
+
+    assert 'name="llm_ai_minutes_per_night"' in client.get("/settings").text
+    client.post("/settings/llm", data={"llm_ai_minutes_per_night": "45"})
+    with session_scope() as s:
+        assert load_llm_config(s).ai_minutes_per_night == 45
+
+
+def test_micro_caps_carry_a_pill(client):
+    _seed()
+    with session_scope() as s:
+        ensure_ticker(s, "ROCKT").market_cap = D("1.5e8")
+        s.commit()
+    html = client.get("/recommendations").text
+    assert ">micro</span>" in html
+    assert ">micro</span>" in client.get("/").text
+
+
+def test_report_explains_a_budget_skip(client):
+    from app.db.models import ResearchReport
+
+    with session_scope() as s:
+        t = ensure_ticker(s, "SKIP")
+        s.add(ResearchReport(ticker_id=t.id, model_or_rule_version="rules-v1", summary="r",
+                             overall_stance="neutral", score=D("50"),
+                             payload_json={"ai_skipped": "budget", "bull_points": [],
+                                           "bear_points": [], "risks": [], "evidence": [],
+                                           "sub_scores": [], "weights_used": {},
+                                           "missing_fields": []}))
+        s.commit()
+    assert "nightly AI budget ran out" in client.get("/research/SKIP").text

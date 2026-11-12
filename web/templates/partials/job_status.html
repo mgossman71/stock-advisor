@@ -1,5 +1,5 @@
 {% set titles = {"first-run setup": "Setting up the app for the first time",
-                 "refresh": "Full refresh", "prices": "Price refresh", "auto-refresh": "Auto-refresh", "auto-refresh prices": "Auto price refresh", "auto-refresh full": "Auto full refresh", "nightly": "Nightly job", "screen": "Screening"} %}
+                 "refresh": "Full refresh", "prices": "Price refresh", "auto-refresh": "Auto-refresh", "auto-refresh prices": "Auto price refresh", "auto-refresh full": "Auto full refresh", "nightly": "Nightly job", "screen": "Screening", "backtest": "Lens backtest"} %}
 {% if status.running %}
 <div class="job-result" hx-get="/jobs/status?watching=1" hx-trigger="every 3s" hx-swap="outerHTML">
   <b>{{ titles.get(status.name, status.name) }}</b> — {{ status.phase }}{% if status.detail %} {{ status.detail }}{% endif %}
@@ -29,6 +29,9 @@
   <details><summary class="neg">{{ r.errors|length }} price error(s)</summary>
     <ul>{% for e in r.errors %}<li>{{ e }}</li>{% endfor %}</ul></details>
   {% endif %}
+  {% elif status.name == "backtest" %}
+  {% if status.result and status.result.error %}<b class="neg">Lens backtest:</b> {{ status.result.error }}
+  {% else %}<b>Lens backtest done.</b> See the results on the <a href="/screen#backtest">Screener</a>.{% endif %}
   {% elif status.name == "screen" %}
   {% set stats = status.result %}
   <b>Screen done:</b> scanned={{ stats.scanned }} · fully researched={{ stats.scored }}

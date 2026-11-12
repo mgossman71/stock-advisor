@@ -33,20 +33,23 @@ from sqlalchemy.orm import Session
 
 from app.config import Settings, get_settings
 from app.db.models import (
-    Alert, DataFetchLog, EarningsEvent, Order, PriceHistory, Recommendation, ResearchReport,
-    Ticker,
+    Alert, AppSetting, DataFetchLog, EarningsEvent, Order, PriceHistory, Recommendation,
+    ResearchReport, Ticker,
 )
 from app.background import Progress
 from app.db.base import session_scope
 from app.ingestion.ingest import (
-    ingest_fundamentals, ingest_history, ingest_quote, log_fetch, refresh_symbol,
+    earnings_calendar_days, ingest_earnings_calendar, ingest_fundamentals, ingest_history,
+    ingest_quote, log_fetch, refresh_symbol,
 )
 from app.ingestion.universe import load_universe, persist_universe
 from app.providers.registry import build_provider
 from app.providers.base import MarketDataProvider
+from app.research.backtest import run_backtest, save_result as save_backtest
 from app.research.outcomes import grade_recommendation, update_statuses
 from app.research.scan import (
-    SCAN_LOOKBACK_DAYS, ScanResult, emerging_symbols, fundamentals_due, load_scan_config,
+    SCAN_LOOKBACK_DAYS, ScanResult, confirm_emerging, emerging_symbols, fundamentals_due,
+    load_scan_config,
     record_universe_refresh, run_scan, shortlist_symbols, universe_due,
     universe_stock_symbols,
 )
@@ -69,6 +72,9 @@ class JobReport:
     #: Funnel stage 1: universe stocks whose history was refreshed / scored.
     scan_fetched: int = 0
     scan_fetch_errors: int = 0
+    #: Earnings-calendar days fetched / companies matched to tracked tickers.
+    earnings_days: int = 0
+    earnings_matched: int = 0
     fundamentals_refreshed: int = 0
     scan: dict = field(default_factory=dict)
     scored: int = 0
@@ -261,11 +267,72 @@ def run_screen_only(progress: Progress | None = None):
     full reports for the shortlist.  No fetching."""
     with session_scope() as session:
         scan = run_scan(session, progress=progress)
+        confirm_emerging(session)
         session.commit()
         stats = screen_universe(session, progress=progress, commit_each=True)
         stats.scanned = scan.scored
         session.commit()
         return stats
+
+
+#: The lens backtest needs ~2 years of month-ends plus the 400-day scan
+#: window behind each one, so history is extended to this once (the nightly
+#: scan keeps fetching only its own window).
+BACKTEST_HISTORY_YEARS = 3
+HISTORY_EXTENDED_KEY = "history_extended_from"
+
+
+def extend_history(session: Session, provider: MarketDataProvider, settings: Settings,
+                   today: dt.date, progress: Progress | None = None) -> int:
+    """Fetch older bars for the universe (+ benchmark) back to
+    ``BACKTEST_HISTORY_YEARS``.  Runs once: a stamp in ``app_settings`` stops
+    a re-run (young listings can never reach 3 years and would refetch
+    forever).  Returns the number of symbols fetched."""
+    start = today - dt.timedelta(days=365 * BACKTEST_HISTORY_YEARS)
+    stamp = session.scalar(select(AppSetting).where(AppSetting.key == HISTORY_EXTENDED_KEY))
+    if stamp is not None and dt.date.fromisoformat(stamp.value) <= start + dt.timedelta(days=31):
+        return 0
+    earliest = dict(session.execute(
+        select(PriceHistory.ticker_id, func.min(PriceHistory.date))
+        .group_by(PriceHistory.ticker_id)).tuples().all())
+    tickers = session.scalars(select(Ticker).where(
+        (Ticker.in_universe.is_(True) & (Ticker.asset_class == "stock"))
+        | (Ticker.symbol == settings.benchmark_symbol))).all()
+    due = [t for t in tickers
+           if earliest.get(t.id) is None or earliest[t.id] > start + dt.timedelta(days=10)]
+    fetched = 0
+    for index, ticker in enumerate(due, start=1):
+        if progress is not None:
+            progress("extending price history (one-time)", index - 1, len(due), ticker.symbol)
+        end = earliest[ticker.id] - dt.timedelta(days=1) if earliest.get(ticker.id) else today
+        asset = "index" if ticker.symbol == settings.benchmark_symbol else "stock"
+        try:
+            ingest_history(session, provider, ticker.symbol, start, end, asset_class=asset)
+            fetched += 1
+        except Exception:  # one bad symbol must not sink a long one-time job
+            pass
+        session.commit()
+    if stamp is None:
+        stamp = AppSetting(key=HISTORY_EXTENDED_KEY, value=start.isoformat())
+        session.add(stamp)
+    stamp.value = start.isoformat()
+    session.commit()
+    return fetched
+
+
+def run_lens_backtest(progress: Progress | None = None) -> dict:
+    """Background entry point for the Screener's "Run backtest": extend
+    history if it never was, replay the emerging lens over it, store it."""
+    settings = get_settings()
+    provider = build_provider(settings)
+    with session_scope() as session:
+        extended = extend_history(session, provider, settings, dt.date.today(), progress)
+        result = run_backtest(session, benchmark_symbol=settings.benchmark_symbol,
+                              progress=progress)
+        result["history_extended"] = extended
+        save_backtest(session, result)
+        session.commit()
+        return result
 
 
 def run_nightly(
@@ -325,6 +392,21 @@ def run_nightly(
             report.scan_fetch_errors += 1
         session.commit()
 
+    # 1b'. the market-wide earnings calendar (one call per day, whole market):
+    #      surprises feed the emerging lens's post-earnings-drift signal.
+    days = earnings_calendar_days(session, today)
+    if max_symbols:
+        days = days[-max_symbols:]
+    for index, day in enumerate(days, start=1):
+        step("fetching the earnings calendar", index - 1, len(days), day.isoformat())
+        try:
+            stats = ingest_earnings_calendar(session, provider, day)
+            report.earnings_days += 1
+            report.earnings_matched += stats.written
+        except Exception:  # keep the job alive; the day is retried next run
+            report.scan_fetch_errors += 1
+        session.commit()
+
     # 1c. scan-score the whole universe -> shortlist
     step("scanning")
     scan: ScanResult = run_scan(session, today=today, shortlist_size=config.shortlist_size,
@@ -348,6 +430,12 @@ def run_nightly(
         except Exception as exc:  # provider chain already retries; keep the job alive
             report.fetch_errors.append(f"{symbol}: {exc}")
         session.commit()
+
+    # 1e. rank the reviewed early movers by catalysts (their news/analyst rows
+    #     just landed) - that order decides who gets AI time tonight
+    step("weighing catalysts")
+    confirm_emerging(session, today)
+    session.commit()
 
     # 2. borrow accrual, once per calendar day
     account = get_or_open_account(session, settings)

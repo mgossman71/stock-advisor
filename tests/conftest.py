@@ -79,6 +79,7 @@ class FakeProvider(MarketDataProvider):
         actions: list[AnalystAction] | None = None,
         earnings: list[EarningsEvent] | None = None,
         dividends: list[Dividend] | None = None,
+        calendar: dict[dt.date, list[EarningsEvent]] | None = None,
         fail: set[str] | None = None,
         name: str | None = None,
         missing_fields: tuple[str, ...] = (),
@@ -86,6 +87,8 @@ class FakeProvider(MarketDataProvider):
         self.bars, self.quote, self.fundamentals = bars, quote, fundamentals
         self.news, self.actions, self.earnings = news, actions, earnings
         self.dividends = dividends
+        #: Market-wide earnings calendar by day; None = capability unsupported.
+        self.calendar = calendar
         self.fail = fail or set()
         self.missing_fields = missing_fields
         self.calls: list[str] = []
@@ -153,6 +156,17 @@ class FakeProvider(MarketDataProvider):
                                   error="dividends down")
         rows = tuple(d for d in (self.dividends or ()) if start <= d.ex_date <= end)
         return ProviderResult(self.name, f"dividends({symbol})", ok=True, data=rows,
+                              row_count=len(rows))
+
+    def get_earnings_calendar(self, day: dt.date) -> ProviderResult:
+        if self.calendar is None:
+            return super().get_earnings_calendar(day)
+        self.calls.append(f"calendar:{day.isoformat()}")
+        if "earnings_calendar" in self.fail:
+            return ProviderResult(self.name, f"earnings_calendar({day})", ok=False,
+                                  error="calendar down")
+        rows = tuple(self.calendar.get(day, ()))  # empty day = success, like Nasdaq
+        return ProviderResult(self.name, f"earnings_calendar({day})", ok=True, data=rows,
                               row_count=len(rows))
 
     def get_universe(self, kind: str = "sp500") -> ProviderResult:

@@ -25,7 +25,7 @@ make clean-db-docker           # down -v: ALSO deletes the database volume
 make docker-stats              # stats as the container sees them (volume, not ./data)
 make docker-fetch TICKER=MSFT  # one-shot fetch into the container's volume
 
-make test                      # .venv/bin/python -m pytest -q -> 387 tests, no network
+make test                      # .venv/bin/python -m pytest -q -> 413 tests, no network
 make migrate                   # alembic upgrade head
 rm -f data/stock_advisor.db* && make migrate    # rebuild the local DB from scratch
 bash scripts/bootstrap.sh      # .venv (Python 3.11/3.12), install deps, migrate — idempotent
@@ -174,6 +174,21 @@ the README whenever these change), `test_report.py`/`test_advisor.py`
   (lens >= 70, AI must be bullish / rules not bearish, -8%/+25%, horizon
   short = 120-day expiry). Scoreboard/recommendations split by
   `lens_filter` on `engine_version` - keep the `emerging` prefix.
+- **Earnings calendar** (`get_earnings_calendar`, `ingest_earnings_calendar`):
+  one Nasdaq call per day, market-wide; only updates tickers already stored
+  (never creates them); a day is "settled" once fetched >= 3 days after it
+  (`earnings_calendar_days`); a calendar "scheduled" never overwrites a
+  "reported" row.  An empty day is success in the fallback chain.
+- **AI budget, not AI count** (`screener.screen_universe`): candidates come
+  from `screening_candidates` in priority order (owned/watched -> emerging by
+  `confirm_emerging` score -> shortlist); `AIBudget` (injectable clock) stops
+  model calls at `ai_minutes_per_night`; `reusable_ai_report` skips the model
+  for unchanged names (< 7 days, price +-5%, no new earnings/analyst action,
+  lens +-10).  Budget-skipped reports carry `payload.ai_skipped="budget"`.
+- **Backtest** (`app/research/backtest.py`): must call the live
+  `emerging.signals/score/percentiles` on bars sliced to the as-of date -
+  `tests/test_backtest.py::test_no_look_ahead` pins it.  History extension
+  (`jobs.extend_history`) is one-time, stamped `history_extended_from`.
 - **Long work goes through `app/background.py`'s `runner`** (single-flight,
   daemon thread, progress via `GET /jobs/status`): first-run setup, nightly,
   `POST /jobs/refresh`, `POST /screen/run`. Never run the pipeline inside a

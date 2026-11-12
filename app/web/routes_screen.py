@@ -17,7 +17,8 @@ from sqlalchemy import func, select
 from app.background import runner
 from app.db.base import session_scope
 from app.db.models import ResearchReport, ScanScore, Ticker
-from app.jobs import run_screen_only
+from app.jobs import run_lens_backtest, run_screen_only
+from app.research.backtest import load_result as load_backtest
 from app.research import emerging
 from app.research.scan import latest_scan_date, load_scan_config, universe_info
 from app.web.common import DISCLAIMER, templates
@@ -27,8 +28,10 @@ from app.web.routes_recommendations import holdings_by_ticker
 router = APIRouter()
 
 BLOCKS = ("value", "momentum", "quality", "risk")
-#: (key, label, upper bound in $) - "small" < $2B <= "mid" < $10B <= "large".
-CAP_BANDS = (("small", "small cap (< $2B)", Decimal("2e9")),
+#: (key, label, upper bound in $) - "micro" < $300M <= "small" < $2B <= "mid"
+#: < $10B <= "large".
+CAP_BANDS = (("micro", "micro cap (< $300M, high risk)", Decimal("3e8")),
+             ("small", "small cap ($300M–$2B)", Decimal("2e9")),
              ("mid", "mid cap ($2B–$10B)", Decimal("10e9")),
              ("large", "large cap (≥ $10B)", None))
 SORTS = ("rank", "emerging") + BLOCKS
@@ -38,6 +41,8 @@ PAGE_ROWS = 200
 def cap_band(market_cap: Decimal | None) -> str | None:
     if market_cap is None:
         return None
+    if emerging.is_micro(market_cap):
+        return "micro"
     if market_cap < Decimal("2e9"):
         return "small"
     return "mid" if market_cap < Decimal("10e9") else "large"
@@ -71,6 +76,7 @@ def screen_page(request: Request, sector: str | None = None, q: str | None = Non
             select(ScanScore, Ticker).join(Ticker, Ticker.id == ScanScore.ticker_id)
             .where(ScanScore.scan_date == scan_date).order_by(ScanScore.rank)
         ).all() if scan_date else []
+        backtest = load_backtest(session)
         sectors = sorted({t.sector for _, t in rows if t.sector})
         with_fundamentals = sum(1 for s, _ in rows if s.has_fundamentals)
 
@@ -132,7 +138,8 @@ def screen_page(request: Request, sector: str | None = None, q: str | None = Non
                  "sort": sort, "all": all, "matched": matched, "page_rows": PAGE_ROWS,
                  "scan_date": scan_date, "scanned": len(rows),
                  "with_fundamentals": with_fundamentals, "universe_count": universe_count,
-                 "info": info, "config": config, "cap_bands": CAP_BANDS, "blocks": BLOCKS},
+                 "info": info, "config": config, "cap_bands": CAP_BANDS, "blocks": BLOCKS,
+                 "backtest": backtest},
     )
 
 
@@ -142,3 +149,12 @@ def run_screen(request: Request):
     (no fetching - that's the pipeline); returns the polling progress panel."""
     runner.start("screen", run_screen_only)
     return job_status_response(request)
+
+
+@router.post("/screen/backtest")
+def run_backtest_job(request: Request):
+    """Replay the emerging lens over stored history in the background (the
+    first run also fetches ~3 years of prices, once); returns progress."""
+    runner.start("backtest", run_lens_backtest)
+    return job_status_response(request)
+

@@ -51,7 +51,7 @@
       <tr>
         <td class="num muted" data-label="#">{{ idea.rank }}</td>
         <td data-label="Side"><span class="pill {{ 'bullish' if rec.direction == 'long' else 'bearish' }}">{{ rec.direction|upper }}</span></td>
-        <td data-label="Ticker"><a href="/research/{{ idea.symbol }}">{{ idea.symbol }}</a></td>
+        <td data-label="Ticker"><a href="/research/{{ idea.symbol }}">{{ idea.symbol }}</a>{% if idea.rec.ticker.market_cap|micro %} <span class="pill bearish" title="micro cap (under $300M): high risk, thin trading">micro</span>{% endif %}</td>
         <td class="num" data-label="Conf">{{ rec.confidence }}</td>
         <td class="num" data-label="Entry @ call">{{ rec.entry_price_at_call|price }}
             <span class="muted" style="font-size:.75rem">{{ rec.generated_at.strftime('%Y-%m-%d') }}</span></td>
@@ -93,7 +93,7 @@
       {% for m in early.rows %}
       <tr>
         <td class="num muted" data-label="#">{{ m.rank }}</td>
-        <td data-label="Ticker"><a href="/research/{{ m.symbol }}">{{ m.symbol }}</a>
+        <td data-label="Ticker"><a href="/research/{{ m.symbol }}">{{ m.symbol }}</a>{% if m.micro %} <span class="pill bearish" title="micro cap (under $300M): high risk, thin trading">micro</span>{% endif %}
           <span class="muted">{{ m.name or "" }}</span></td>
         <td class="num" data-label="Lens">{{ m.score|round(0)|int }}</td>
         <td data-label="Why it's flagged">

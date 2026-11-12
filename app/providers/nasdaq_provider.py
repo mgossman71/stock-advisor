@@ -1,8 +1,10 @@
 """Nasdaq public API provider (no key required) - verified live on this host.
 
 Endpoints: ``/api/quote/{sym}/chart`` (full daily OHLCV in ``data.chart[].z``,
-~251 rows/yr), ``/info`` (name, last price, timeAsOf) and ``/summary`` (sector,
-industry, market cap, 52-week range, dividend, consensus 1-year target).
+~251 rows/yr), ``/info`` (name, last price, timeAsOf), ``/summary`` (sector,
+industry, market cap, 52-week range, dividend, consensus 1-year target) and
+``/api/calendar/earnings?date=`` (every company reporting that day, with EPS
+forecast / actual / surprise % - one call covers the whole market).
 
 Nasdaq encodes numbers as human strings ("$348.9607", "5,064,610,748,820",
 "$355.38/$243.42") with "--" for missing; :mod:`app.ingestion.normalize` handles
@@ -27,7 +29,7 @@ from app.ingestion.normalize import (
     ratio, split_pair, to_decimal,
 )
 from app.providers.base import (
-    FundamentalsSnapshot, MarketDataProvider, ProviderResult, Quote, Side,
+    EarningsEvent, FundamentalsSnapshot, MarketDataProvider, ProviderResult, Quote, Side,
 )
 from app.providers.throttle import (
     HostThrottler, PermanentProviderError, TransientProviderError, call_with_retries,
@@ -118,6 +120,34 @@ class NasdaqProvider(MarketDataProvider):
             except PermanentProviderError as exc:
                 last_error = exc
         raise last_error or PermanentProviderError("unresolvable asset class")
+
+    # -------------------------------------------------------- earnings calendar
+    def get_earnings_calendar(self, day: dt.date) -> ProviderResult:
+        """Market-wide reporters for ``day``.  EPS like ``"($1.10)"`` is
+        negative; ``"N/A"``/blank stays unknown.  A row with an actual EPS is
+        ``reported``, otherwise ``scheduled``."""
+        endpoint = f"earnings_calendar({day.isoformat()})"
+        try:
+            data = self._get_json("/calendar/earnings", {"date": day.isoformat()})
+        except (TransientProviderError, PermanentProviderError) as exc:
+            return ProviderResult(self.name, endpoint, ok=False, error=str(exc))
+        events = []
+        for row in (data.get("rows") or []) if isinstance(data, dict) else []:
+            symbol = clean_text(row.get("symbol"))
+            if not symbol:
+                continue
+            actual = to_decimal(row.get("eps"))
+            events.append(EarningsEvent(
+                symbol=symbol.upper().replace("/", "-").replace(".", "-"),
+                event_date=day,
+                eps_estimate=to_decimal(row.get("epsForecast")),
+                eps_actual=actual,
+                surprise_pct=to_decimal(row.get("surprise")) if actual is not None else None,
+                status="reported" if actual is not None else "scheduled",
+                source=self.name,
+            ))
+        return ProviderResult(self.name, endpoint, ok=True, data=tuple(events),
+                              row_count=len(events))
 
     # ----------------------------------------------------------------- history
     def get_history(

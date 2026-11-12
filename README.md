@@ -158,15 +158,50 @@ out of 100:
 | Accumulation: up-day vs down-day volume over 50 days ≥ 1.6 (6 pts at 1.3) | 10 |
 | Tight base: the 15 days before the last week trade in ≤ half the prior range | 5 |
 | Accelerating: the last month is beating the 3-month pace | 5 |
+| Earnings drift: EPS beat ≥ 10% in the last 30 days, price still above its pre-report close | 10 |
 | Revenue / EPS growth ≥ 25% a year (each, when known) | 5 + 5 |
-| Size tilt: small cap < $2B / mid cap < $10B | 5 / 3 |
+| Size tilt: micro < $300M / small < $2B / mid < $10B | 5 / 5 / 3 |
+| EPS miss ≤ −10% in the last 30 days | −5 |
 | More than 25% above the 50-day average ("may be late") | −10 |
 | Below the 200-day average | −10 |
 
-The top `emerging` candidates (default 10, Settings → Stock discovery; 0 =
-off) that score ≥ 55 get the same full research as the shortlist. The AI
-analyst gets their signals and is asked whether a real catalyst is behind
-the move, or whether it's noise or already late. A candidate scoring ≥ 70
+**Earnings for the whole market, cheaply.** Each night the app reads
+Nasdaq's earnings calendar: one call per day lists every company that
+reported, with the EPS forecast, actual and surprise. The first run fills
+~45 days (about 40 calls); after that it's ~10 calls a night (recent days
+until they settle, plus the next two weeks, so "earnings due in N days"
+shows as event risk). The calendar only updates stocks the app already
+tracks; it never adds new ones.
+
+**Middle stage, no AI.** The top `emerging` candidates scoring ≥ 55
+(default 50, Settings → Stock discovery; 0 = off) get the same full fetch
+and report as the shortlist. They are then re-ranked by their catalysts:
+- **Analyst actions:** ±4 points per net upgrade or target raise in 30 days,
+  capped at ±12.
+- **News tone:** ±4 when clearly positive or negative.
+
+That **confirmed** score decides who gets AI time.
+
+**AI time budget** (Settings → AI analyst, default 60 minutes a night).
+- **Order:** the nightly screen spends it on what you hold or watch, then
+  early movers by confirmed score, then the shortlist.
+- **Reuse:** a stock keeps its AI report, with no new call, while that report
+  is under 7 days old and nothing material changed: price within 5%, no new
+  earnings or analyst action, lens score within 10 points.
+- **Rotation:** each night's budget goes to names it hasn't read yet. At
+  ~100 s a call, an hour reads ~35 stocks a night, and well over 100
+  different ones over a week.
+- **Past the budget:** stocks still get the rules report, and the report
+  page says the budget ran out. The budget is checked before each call, so a
+  run can overshoot by up to one call.
+
+The AI analyst gets each candidate's signals and is asked whether a real
+catalyst is behind the move, or whether it's noise or already late.
+
+**Micro caps.** The default market-cap floor is $50M, so the scan includes
+micro caps (< $300M). Their suggestions are labelled "MICRO CAP — high
+risk", carry a *micro* pill everywhere, and have confidence capped at 65.
+The $1M-a-day trading floor stays, so positions can be entered and exited. A candidate scoring ≥ 70
 whose full report doesn't object becomes an **`emerging-v1` call**:
 - **Veto:** with the AI on, its stance must be bullish; on rules alone, the
   report just mustn't be bearish.
@@ -180,6 +215,23 @@ graded like every other call. The **Recommendations** lens filter and the
 dashboard's **Early movers** panel show their own track record, so the lens
 has to earn trust. The points are a ranking of where to look first, not a
 forecast: plenty of breakouts fail.
+
+**Backtest** (Screener → "Run lens backtest", or `python -m app.cli
+backtest-lens`). This gives evidence now instead of after months of live
+grading.
+- **Method:** at each month-end over the last ~2 years, it scores every stock
+  with the same lens code, using only data available that day (no
+  look-ahead). It then measures the next 1 and 3 months against the S&P 500,
+  and whether a −8% / +25% call would have hit its stop or target first.
+- **Groups:** the top picks, the score bands, and every stock as the baseline.
+  The lens has an edge only if the top rows consistently beat the baseline.
+- **First run:** fetches about 3 years of prices once (roughly an hour for
+  the full universe).
+- **Caveats** (shown with the results): today's listings only (survivorship
+  bias), no trading costs, the earnings and growth signals aren't in it, and
+  size uses today's market cap.
+- **Thresholds:** they are not auto-tuned from it. Change them deliberately,
+  here.
 
 **Auto-refresh** (Settings → Auto-refresh, off by default) gives each job
 its own timer: prices only (every 5 min to 12 h) and full refresh (every
@@ -342,7 +394,7 @@ pages — a call with an unfinished window is *not graded*, not "0".
 ## Tests
 
 ```
-make test   # 387 tests, <4s, no network
+make test   # 413 tests, <4s, no network
 ```
 
 Pinned invariants: P&L math (incl. shorts + borrow), scoring thresholds

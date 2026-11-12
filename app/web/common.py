@@ -8,6 +8,7 @@ from decimal import Decimal, InvalidOperation
 from fastapi.templating import Jinja2Templates
 
 from app.config import BASE_DIR
+from app.research.emerging import is_micro
 
 templates = Jinja2Templates(directory=str(BASE_DIR / "web" / "templates"))
 
@@ -60,6 +61,8 @@ def register_filters(env) -> None:
     env.filters["money"] = _money
     env.filters["price"] = _price
     env.filters["as_of"] = _as_of
+    # {{ ticker.market_cap|micro }} -> True below the micro-cap line
+    env.filters["micro"] = is_micro
 
 
 register_filters(templates.env)
