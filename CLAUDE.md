@@ -25,7 +25,7 @@ make clean-db-docker           # down -v: ALSO deletes the database volume
 make docker-stats              # stats as the container sees them (volume, not ./data)
 make docker-fetch TICKER=MSFT  # one-shot fetch into the container's volume
 
-make test                      # .venv/bin/python -m pytest -q -> 431 tests, no network
+make test                      # .venv/bin/python -m pytest -q -> 435 tests, no network
 make migrate                   # alembic upgrade head
 rm -f data/stock_advisor.db* && make migrate    # rebuild the local DB from scratch
 bash scripts/bootstrap.sh      # .venv (Python 3.11/3.12), install deps, migrate — idempotent
@@ -189,6 +189,14 @@ the README whenever these change), `test_report.py`/`test_advisor.py`
   `emerging.signals/score/percentiles` on bars sliced to the as-of date -
   `tests/test_backtest.py::test_no_look_ahead` pins it.  History extension
   (`jobs.extend_history`) is one-time, stamped `history_extended_from`.
+- **"Refresh prices" = everything** (`jobs.refresh_prices`): bulk
+  `ingest_quotes` over every ticker with stored prices via
+  `get_quotes` (Yahoo `v7/finance/quote` through yfinance's `YfData`, which
+  handles the crumb; `QUOTE_CHUNK`=200), then one-at-a-time `ingest_quote`
+  only for held/watched symbols the batch missed.  Both store through
+  `_store_quote` (provisional bar, never over a settled close).  The Nasdaq
+  screener's `lastsale` is NOT live (it is the previous close) - never use
+  it for prices.
 - **Long work goes through `app/background.py`'s `runner`** (single-flight,
   daemon thread, progress via `GET /jobs/status`): first-run setup, nightly,
   `POST /jobs/refresh`, `POST /screen/run`. Never run the pipeline inside a

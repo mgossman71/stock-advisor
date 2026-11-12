@@ -153,9 +153,12 @@ against the previous close.
 - **↻ refresh** fetches a quote on demand. Quotes come from Yahoo (Nasdaq as
   fallback) and match Yahoo's quote page to the cent, give or take the
   seconds between requests.
-- **"Refresh prices" scope.** The top-bar button quotes only what you hold
-  or watch (plus open calls, alerts and pending orders), so a stock you only
-  researched is refreshed by visiting its page. **A research report is a snapshot:**
+- **"Refresh prices"** (top bar, and the auto-refresh price timer) quotes
+  **every stock the app tracks**. It uses Yahoo's batch quote endpoint, 200
+  symbols per request, so ~3,000 stocks take about 15–20 seconds. Anything
+  you hold or watch that the batch misses is retried one at a time,
+  including through Nasdaq, so your positions are never left on an old
+  price. **A research report is a snapshot:**
 its numbers and the AI's text are frozen at the price it was written at, and
 a price refresh doesn't rewrite it. When the price has moved 0.5% or more
 since, an amber note says so ("written when NVDA was 168.89; moved −3.4%
@@ -427,7 +430,7 @@ pages — a call with an unfinished window is *not graded*, not "0".
 ## Tests
 
 ```
-make test   # 431 tests, <4s, no network
+make test   # 435 tests, <4s, no network
 ```
 
 Pinned invariants: P&L math (incl. shorts + borrow), scoring thresholds

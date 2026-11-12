@@ -320,33 +320,75 @@ def ingest_quote(
     quote: Quote = result.data[0]
     ticker = ensure_ticker(session, symbol, name=quote.name, currency=quote.currency,
                            market_cap=quote.market_cap)
-    today = quote.as_of.date()
-    existing = {
-        row.date: row
-        for row in session.scalars(
-            select(PriceHistory).where(
-                PriceHistory.ticker_id == ticker.id, PriceHistory.date == today
-            )
-        )
-    }
-    settled = existing.get(today)
-    if settled is not None and not settled.provisional and session_closed(today):
-        # The day's real bar already landed; a quote must not replace it
-        # (it would wipe OHLC and could pin an intraday price as the close).
+    if not _store_quote(session, ticker.id, quote, result.provider):
         log_fetch(session, provider=result.provider, endpoint=result.endpoint,
                   ticker=symbol, status="skipped_fresh", row_count=0)
-        stats.note(f"settled bar for {today} already stored - quote not written")
+        stats.note(f"settled bar for {quote.as_of.date()} already stored - quote not written")
         return stats, quote
-    # A quote carries no OHLC, so those columns stay NULL rather than being
-    # back-filled with the close - the row's source says which provider priced it.
-    # It is provisional: the next history fetch replaces it with the real bar.
-    bar = Bar(symbol=symbol.upper(), date=today, close=quote.price, source=result.provider)
-    _upsert_bar(session, ticker.id, bar, existing, source=result.provider, provisional=True)
     session.flush()
     stats.written = 1
     log_fetch(session, provider=result.provider, endpoint=result.endpoint, ticker=symbol,
               status="ok", row_count=1)
     return stats, quote
+
+
+def _store_quote(session: Session, ticker_id: int, quote: Quote, provider_name: str) -> bool:
+    """Upsert a quote as its trading day's provisional bar.  False (nothing
+    written) when that day's real bar has already settled."""
+    day = quote.as_of.date()
+    existing = {row.date: row for row in session.scalars(
+        select(PriceHistory).where(PriceHistory.ticker_id == ticker_id,
+                                   PriceHistory.date == day))}
+    settled = existing.get(day)
+    if settled is not None and not settled.provisional and session_closed(day):
+        # The day's real bar already landed; a quote must not replace it
+        # (it would wipe OHLC and could pin an intraday price as the close).
+        return False
+    # A quote carries no OHLC, so those columns stay NULL rather than being
+    # back-filled with the close - the row's source says which provider priced it.
+    # It is provisional: the next history fetch replaces it with the real bar.
+    bar = Bar(symbol=quote.symbol.upper(), date=day, close=quote.price, source=provider_name)
+    _upsert_bar(session, ticker_id, bar, existing, source=provider_name, provisional=True)
+    return True
+
+
+#: Symbols per bulk quote request (Yahoo answers 500 in ~0.2 s; 200 keeps
+#: URLs short and one bad chunk cheap).
+QUOTE_CHUNK = 200
+
+
+def ingest_quotes(session: Session, provider: MarketDataProvider, symbols: list[str],
+                  progress=None) -> tuple[set[str], list[str]]:
+    """Bulk-quote ``symbols`` (already-stored tickers only) in chunks.
+
+    Returns (symbols priced, notes).  A failed chunk is noted and skipped -
+    the caller decides what deserves a one-at-a-time retry.
+    """
+    tickers = dict(session.execute(
+        select(Ticker.symbol, Ticker.id).where(Ticker.symbol.in_(symbols))).tuples().all())
+    wanted = [s for s in symbols if s in tickers]
+    priced: set[str] = set()
+    notes: list[str] = []
+    for start in range(0, len(wanted), QUOTE_CHUNK):
+        chunk = wanted[start:start + QUOTE_CHUNK]
+        if progress is not None:
+            progress("fetching prices", start, len(wanted), chunk[0])
+        result = provider.get_quotes(chunk)
+        if not result.ok:
+            notes.append(f"bulk quotes {start + 1}-{start + len(chunk)}: {result.error}")
+            continue
+        for quote in result.data:
+            ticker_id = tickers.get(quote.symbol)
+            if ticker_id is None:
+                continue
+            # False = that day's real close is already stored: still current.
+            _store_quote(session, ticker_id, quote, result.provider)
+            priced.add(quote.symbol)
+        session.flush()
+        log_fetch(session, provider=result.provider, endpoint=result.endpoint, ticker=None,
+                  status="ok", row_count=len(result.data))
+        session.commit()
+    return priced, notes
 
 
 def ingest_news(

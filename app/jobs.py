@@ -40,7 +40,7 @@ from app.background import Progress
 from app.db.base import session_scope
 from app.ingestion.ingest import (
     earnings_calendar_days, ingest_earnings_calendar, ingest_fundamentals, ingest_history,
-    ingest_quote, log_fetch, refresh_symbol,
+    ingest_quote, ingest_quotes, log_fetch, refresh_symbol,
 )
 from app.ingestion.universe import load_universe, persist_universe
 from app.providers.registry import build_provider
@@ -221,7 +221,12 @@ def refresh_prices(
     settings: Settings | None = None, today: dt.date | None = None,
     progress: Progress | None = None,
 ) -> PriceRefreshReport:
-    """Quote what the user holds/watches, then fill limits, mark, snapshot, alert.
+    """Quote *every* stock the app tracks, then fill limits, mark, snapshot, alert.
+
+    Bulk first: one batch request per ~200 symbols (``ingest_quotes``), so
+    the whole universe takes seconds.  Anything you hold or watch that the
+    batch missed is retried one at a time through the full provider chain,
+    so your own positions are never left on an old price.
 
     Idempotent like the full pass: quotes upsert the day's provisional bar
     (never a settled one), pending limits fill at most once, the snapshot
@@ -231,11 +236,17 @@ def refresh_prices(
     settings = settings or get_settings()
     today = today or dt.date.today()
     report = PriceRefreshReport()
-    symbols = price_symbols(session, settings)
-    report.symbols = len(symbols)
-    for index, symbol in enumerate(symbols, start=1):
+    everything = sorted(set(session.scalars(
+        select(Ticker.symbol).join(PriceHistory, PriceHistory.ticker_id == Ticker.id)
+        .distinct())) | {settings.benchmark_symbol})
+    report.symbols = len(everything)
+    priced, notes = ingest_quotes(session, provider, everything, progress=progress)
+    report.errors.extend(notes)
+
+    held = [s for s in price_symbols(session, settings) if s not in priced]
+    for index, symbol in enumerate(held, start=1):
         if progress is not None:
-            progress("fetching prices", index - 1, len(symbols), symbol)
+            progress("fetching prices one by one", index - 1, len(held), symbol)
         asset = "index" if symbol in (settings.benchmark_symbol, settings.vix_symbol) else "stock"
         try:
             stats, quote = ingest_quote(session, provider, symbol, asset_class=asset)
@@ -245,8 +256,9 @@ def refresh_prices(
             if quote is None:
                 report.errors.append(f"{symbol}: {'; '.join(stats.notes) or 'no quote'}")
             else:
-                report.quoted.append(symbol)
+                priced.add(symbol)
         session.commit()
+    report.quoted = sorted(priced)
 
     if progress is not None:
         progress("marking positions")

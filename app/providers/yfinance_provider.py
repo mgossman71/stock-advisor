@@ -11,6 +11,7 @@ from __future__ import annotations
 import datetime as dt
 import re
 from decimal import Decimal
+from zoneinfo import ZoneInfo
 
 import yfinance
 
@@ -25,6 +26,8 @@ from app.providers.throttle import (
 )
 
 _HOST = "query1.finance.yahoo.com"
+_BATCH_QUOTE_URL = f"https://{_HOST}/v7/finance/quote"
+_NEW_YORK = ZoneInfo("America/New_York")
 _RATE_HINT = re.compile(r"(429|rate limit|too many requests|timeout|timed out|connection)", re.I)
 
 
@@ -170,6 +173,50 @@ class YFinanceProvider(MarketDataProvider):
             provider=self.name, endpoint=f"quote({symbol})", ok=True,
             data=(quote,), row_count=1, as_of=as_of, missing_fields=missing,
         )
+
+    def get_quotes(self, symbols: list[str]) -> ProviderResult:
+        """Many live quotes in one request: Yahoo's batch quote endpoint (the
+        one its own pages use), through yfinance's session so the cookie and
+        crumb Yahoo requires are handled.  Verified live: the price matches
+        ``regularMarketPrice`` / ``fast_info`` to the cent, 500 symbols in
+        ~0.2 s.  Callers chunk; ~200 per call keeps URLs reasonable."""
+        endpoint = f"quotes({len(symbols)})"
+
+        def fetch():
+            from yfinance.data import YfData  # yfinance's crumb-aware session
+
+            response = YfData().get(_BATCH_QUOTE_URL, params={
+                "symbols": ",".join(symbols),
+                "fields": "regularMarketPrice,regularMarketTime,"
+                          "regularMarketPreviousClose,currency,marketCap,shortName",
+            })
+            if response.status_code == 429:
+                raise TransientProviderError("HTTP 429")
+            if response.status_code >= 400:
+                raise PermanentProviderError(f"HTTP {response.status_code}")
+            return response.json()["quoteResponse"]["result"]
+
+        try:
+            rows = self._run(endpoint, fetch)
+        except (TransientProviderError, PermanentProviderError) as exc:
+            return ProviderResult(self.name, endpoint, ok=False, error=str(exc))
+        quotes = []
+        for row in rows or []:
+            price = to_decimal(row.get("regularMarketPrice"))
+            stamp = row.get("regularMarketTime")
+            if price is None or not row.get("symbol") or stamp is None:
+                continue
+            quotes.append(Quote(
+                symbol=str(row["symbol"]).upper(), price=price,
+                # Exchange clock, so the bar lands on the New York trading day.
+                as_of=dt.datetime.fromtimestamp(int(stamp), tz=_NEW_YORK),
+                source=self.name, currency=row.get("currency"),
+                previous_close=to_decimal(row.get("regularMarketPreviousClose")),
+                market_cap=to_decimal(row.get("marketCap")),
+                name=clean_text(row.get("shortName")),
+            ))
+        return ProviderResult(self.name, endpoint, ok=bool(quotes), data=tuple(quotes),
+                              row_count=len(quotes), error=None if quotes else "no quotes")
 
     @staticmethod
     def _quote_timestamp(fast_info, frame) -> dt.datetime:

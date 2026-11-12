@@ -212,6 +212,13 @@ class MarketDataProvider(ABC):
     def get_quote(self, symbol: str, *, asset_class: Side = "stock") -> ProviderResult:
         """Latest available price + as-of timestamp."""
 
+    def get_quotes(self, symbols: list[str]) -> ProviderResult:
+        """Live quotes for many symbols in one request (the bulk "Refresh
+        prices").  ``data`` holds a :class:`Quote` per symbol the provider
+        priced; missing symbols are simply absent.  Unsupported by default."""
+        return ProviderResult(self.name, f"quotes({len(symbols)})", ok=False,
+                              error="unsupported")
+
     def get_fundamentals(self, symbol: str, *, asset_class: Side = "stock") -> ProviderResult:
         """Fundamental/valuation snapshot.  Unsupported by default."""
         return ProviderResult(self.name, "fundamentals", ok=False, error="unsupported")

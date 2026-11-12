@@ -97,6 +97,10 @@ class FallbackProvider(MarketDataProvider):
     def get_quote(self, symbol: str, *, asset_class: Side = "stock") -> ProviderResult:
         return self._resolve("quote", symbol, lambda p: p.get_quote(symbol, asset_class=asset_class))
 
+    def get_quotes(self, symbols: list[str]) -> ProviderResult:
+        return self._resolve("quotes", f"{len(symbols)} symbols",
+                             lambda p: p.get_quotes(symbols))
+
     def get_fundamentals(self, symbol: str, *, asset_class: Side = "stock") -> ProviderResult:
         return self._resolve("fundamentals", symbol, lambda p: p.get_fundamentals(symbol, asset_class=asset_class))
 

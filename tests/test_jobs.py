@@ -175,13 +175,28 @@ def _price_on(session, symbol: str, day: dt.date) -> D | None:
     return row.close if row else None
 
 
-def test_price_refresh_only_quotes_what_is_held_or_watched(session, settings):
+class _BulkBoard(_QuoteBoard):
+    """Also answers bulk quote requests (like Yahoo's batch endpoint)."""
+
+    def __init__(self, prices: dict[str, str]):
+        super().__init__(prices)
+        self.bulk_asked: list[str] = []
+
+    def get_quotes(self, symbols):
+        from app.providers.base import ProviderResult
+        self.calls.append("quotes")
+        self.bulk_asked.extend(symbols)
+        rows = tuple(_quote(s, self.prices[s]) for s in symbols if s in self.prices)
+        return ProviderResult(self.name, f"quotes({len(symbols)})", ok=bool(rows), data=rows,
+                              row_count=len(rows))
+
+
+def test_price_refresh_quotes_everything_in_bulk(session, settings):
     from app.db.models import Position
 
     _seed(session)                                   # ACME is universe-only
-    ensure_ticker(session, "HELD", in_universe=True)
-    ensure_ticker(session, "WATCH", in_watchlist=True)
-    held = ensure_ticker(session, "HELD")
+    ensure_ticker(session, "WATCH", in_watchlist=True)  # watched, no stored price yet
+    held = ensure_ticker(session, "HELD", in_universe=True)
     session.add(PriceHistory(ticker_id=held.id, date=DAY - dt.timedelta(days=1),
                              close=D("50"), source="fake"))
     session.commit()
@@ -189,15 +204,32 @@ def test_price_refresh_only_quotes_what_is_held_or_watched(session, settings):
     execute_order(session, account, "HELD", "buy", 10, settings=settings)
     session.commit()
 
-    board = _QuoteBoard({"HELD": "55.50", "WATCH": "20", "^SPX": "4100"})
+    board = _BulkBoard({"ACME": "181", "HELD": "55.50", "WATCH": "20", "^SPX": "4100",
+                        "^VIX": "17"})
     report = refresh_prices(session, board, settings=settings, today=DAY)
 
-    assert sorted(board.asked) == ["HELD", "WATCH", "^SPX"], "universe-only ACME is skipped"
-    assert set(board.calls) == {"quote"}, "no history/fundamentals/news calls"
-    assert sorted(report.quoted) == ["HELD", "WATCH", "^SPX"] and report.errors == []
+    # Every stored ticker - universe-only ACME included - in one bulk pass.
+    assert sorted(board.bulk_asked) == ["ACME", "HELD", "^SPX", "^VIX"]
+    # The watched stock the bulk pass couldn't cover gets a one-off quote.
+    assert board.asked == ["WATCH"]
+    assert set(board.calls) == {"quotes", "quote"}, "no history/fundamentals/news calls"
+    assert report.quoted == ["ACME", "HELD", "WATCH", "^SPX", "^VIX"] and report.errors == []
+    assert report.symbols == 4
+    assert _price_on(session, "ACME", DAY) == D("181")
     position = session.query(Position).filter_by(account_id=account.id).one()
     assert position.last_price == D("55.50")
     assert report.snapshot_date == DAY.isoformat()
+
+
+def test_price_refresh_without_bulk_still_prices_what_you_hold(session, settings):
+    _seed(session)
+    ensure_ticker(session, "WATCH", in_watchlist=True)
+    session.commit()
+    board = _QuoteBoard({"WATCH": "20", "^SPX": "4100"})  # no bulk support
+    report = refresh_prices(session, board, settings=settings, today=DAY)
+    assert sorted(board.asked) == ["WATCH", "^SPX"]
+    assert any("bulk quotes" in e for e in report.errors)
+    assert "WATCH" in report.quoted
 
 
 def test_price_refresh_fills_limits_triggers_alerts_and_is_idempotent(session, settings):
