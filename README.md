@@ -140,9 +140,22 @@ fundamentals per night, all without a restart. `python -m app.cli scan
 
 ### Current price vs. the report
 
-A stock's page shows its **current stored price** at the top: the newest
-intraday quote (labelled "live quote HH:MM ET") or the latest close, with
-the change against the previous close. **A research report is a snapshot:**
+A stock's page shows its **current price** at the top: the newest intraday
+quote (labelled "live quote HH:MM ET") or the latest close, with the change
+against the previous close.
+- **Self-refreshing.** The page fetches a live quote by itself when the
+  stored one is stale, and stores it, so every list shows it too.
+  - **Market open:** stale means older than 15 minutes.
+  - **Market closed:** stale means it misses the last finished session's
+    close.
+- **No delay.** The page renders at once, and the price updates a moment
+  later.
+- **↻ refresh** fetches a quote on demand. Quotes come from Yahoo (Nasdaq as
+  fallback) and match Yahoo's quote page to the cent, give or take the
+  seconds between requests.
+- **"Refresh prices" scope.** The top-bar button quotes only what you hold
+  or watch (plus open calls, alerts and pending orders), so a stock you only
+  researched is refreshed by visiting its page. **A research report is a snapshot:**
 its numbers and the AI's text are frozen at the price it was written at, and
 a price refresh doesn't rewrite it. When the price has moved 0.5% or more
 since, an amber note says so ("written when NVDA was 168.89; moved −3.4%
@@ -414,7 +427,7 @@ pages — a call with an unfinished window is *not graded*, not "0".
 ## Tests
 
 ```
-make test   # 426 tests, <4s, no network
+make test   # 431 tests, <4s, no network
 ```
 
 Pinned invariants: P&L math (incl. shorts + borrow), scoring thresholds

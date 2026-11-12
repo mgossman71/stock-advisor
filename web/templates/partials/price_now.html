@@ -1,0 +1,29 @@
+{# Current price + report-staleness note.  Rendered inline by the stock page;
+   when the stored price is stale (``auto_refresh``) it immediately asks
+   /research/<symbol>/price for a live quote and swaps itself out - the
+   response never carries the trigger, so it can't loop. #}
+<div id="price-block"
+     {% if auto_refresh %}hx-get="/research/{{ ticker.symbol }}/price" hx-trigger="load" hx-swap="outerHTML"{% endif %}>
+{% if now %}
+<div class="price-now">
+  <span class="price-big">{{ now.price|price }}</span>
+  {% if now.change is not none %}
+  <span class="{{ 'pos' if now.change >= 0 else 'neg' }}">{{ '%+.2f'|format(now.change) }}
+    ({{ '%+.2f'|format(now.change_pct) }}%)</span>
+  {% endif %}
+  <span class="muted">{{ now.label }}{% if now.previous_close is not none %} · prev. close {{ now.previous_close|price }}{% endif %}</span>
+  {% if auto_refresh %}<span class="muted">· updating…</span>{% else %}
+  <button class="btn quiet" hx-get="/research/{{ ticker.symbol }}/price?force=1"
+          hx-target="#price-block" hx-swap="outerHTML" title="fetch a live quote now">↻ refresh</button>{% endif %}
+</div>
+{% elif auto_refresh %}
+<p class="muted">Fetching the current price…</p>
+{% endif %}
+{% if quote_error %}<p class="muted">Couldn't fetch a live quote ({{ quote_error }}); showing the last stored price.</p>{% endif %}
+{% if report_price and (report_price.moved_pct|abs) >= 0.5 %}
+<p class="stale-note">This report was written when {{ ticker.symbol }} was
+  <b>{{ report_price.price|price }}</b>{% if report_price.as_of %} ({{ report_price.as_of }}){% endif %};
+  it has moved <span class="{{ 'pos' if report_price.moved_pct >= 0 else 'neg' }}">{{ '%+.1f'|format(report_price.moved_pct) }}%</span>
+  since. The report's numbers and text are from then: use “Run new research” to refresh it.</p>
+{% endif %}
+</div>

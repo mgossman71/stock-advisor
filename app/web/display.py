@@ -125,3 +125,49 @@ def report_price(report: ResearchReport) -> tuple[Decimal, str | None] | None:
                 return None
     return None
 
+
+#: While the market is open, a stored price older than this is refreshed when
+#: its stock page is viewed.
+LIVE_MAX_AGE = dt.timedelta(minutes=15)
+_OPEN, _CLOSE = dt.time(9, 30), dt.time(16, 0)
+#: Same settle time as ingestion: the closing print is in a few minutes after 16:00.
+_SETTLED = dt.time(16, 15)
+
+
+def _completed_session(local: dt.datetime) -> dt.date:
+    """The most recent New York session that has finished (weekdays only)."""
+    day = local.date()
+    if day.weekday() >= 5 or local.time() < _SETTLED:
+        day -= dt.timedelta(days=1)
+    while day.weekday() >= 5:
+        day -= dt.timedelta(days=1)
+    return day
+
+
+def needs_live_quote(now_price: PriceNow | None, now: dt.datetime | None = None) -> bool:
+    """Should a stock page fetch a live quote before trusting the stored price?
+
+    * Market open: yes, unless today's price was fetched within 15 minutes.
+    * Market closed: yes if the stored price misses the last finished session,
+      or is an intraday quote taken before that session's close.
+    Weekends and pre-market fall under "closed", so a view then costs at
+    most one quote (the closing price), not one per visit.
+    """
+    local = (now or dt.datetime.now(dt.timezone.utc)).astimezone(NEW_YORK)
+    if now_price is None:
+        return True
+    fetched = now_price.fetched_at
+    if fetched is not None and fetched.tzinfo is None:
+        fetched = fetched.replace(tzinfo=dt.timezone.utc)
+    market_open = local.weekday() < 5 and _OPEN <= local.time() < _SETTLED
+    if market_open:
+        return (now_price.date < local.date() or fetched is None
+                or local - fetched.astimezone(NEW_YORK) > LIVE_MAX_AGE)
+    session = _completed_session(local)
+    if now_price.date < session:
+        return True
+    if now_price.date == session and now_price.live:
+        close = dt.datetime.combine(session, _CLOSE, tzinfo=NEW_YORK)
+        return fetched is None or fetched < close
+    return False
+

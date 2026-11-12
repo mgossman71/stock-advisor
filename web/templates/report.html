@@ -5,23 +5,8 @@
 <h1>{{ ticker.symbol }} <span class="muted">{{ ticker.name or "name unavailable" }}</span>
   {% if report %}<span class="pill {{ report.overall_stance }}">{{ report.overall_stance }}</span>
   <span class="kpi" style="font-size:1.2rem">{{ report.score|round(1) }}/100</span>{% endif %}</h1>
-{% if now %}
-<div class="price-now">
-  <span class="price-big">{{ now.price|price }}</span>
-  {% if now.change is not none %}
-  <span class="{{ 'pos' if now.change >= 0 else 'neg' }}">{{ '%+.2f'|format(now.change) }}
-    ({{ '%+.2f'|format(now.change_pct) }}%)</span>
-  {% endif %}
-  <span class="muted">{{ now.label }}{% if now.previous_close is not none %} · prev. close {{ now.previous_close|price }}{% endif %}</span>
-</div>
-{% endif %}
+{% include "partials/price_now.html" %}
 {% if ticker.sector %}<p class="muted">{{ ticker.sector }}{% if ticker.industry %} · {{ ticker.industry }}{% endif %}</p>{% endif %}
-{% if report_price and (report_price.moved_pct|abs) >= 0.5 %}
-<p class="stale-note">This report was written when {{ ticker.symbol }} was
-  <b>{{ report_price.price|price }}</b>{% if report_price.as_of %} ({{ report_price.as_of }}){% endif %};
-  it has moved <span class="{{ 'pos' if report_price.moved_pct >= 0 else 'neg' }}">{{ '%+.1f'|format(report_price.moved_pct) }}%</span>
-  since. The report's numbers and text are from then: use “Run new research” to refresh it.</p>
-{% endif %}
 
 {% if report %}
 <form hx-post="/research/{{ ticker.symbol }}/run" class="inline" style="margin-bottom:1rem">

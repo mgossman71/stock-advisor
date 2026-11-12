@@ -20,13 +20,14 @@ from sqlalchemy import func, or_, select
 from app.config import get_settings
 from app.db.base import session_scope
 from app.db.models import PriceHistory, ResearchReport, Ticker
-from app.ingestion.ingest import refresh_symbol
+from app.ingestion.ingest import ingest_quote, refresh_symbol
 from app.providers.registry import build_provider
 from app.research.llm_advisor import advisor_for
 from app.research.report import closes_with_dates
 from app.web.common import DISCLAIMER, _json_safe, templates
 from app.web.display import (
-    RANGES, load_default_range, price_now, report_price, slice_range, valid_range,
+    RANGES, load_default_range, needs_live_quote, price_now, report_price, slice_range,
+    valid_range,
 )
 
 router = APIRouter()
@@ -125,8 +126,49 @@ def research_report(request: Request, symbol: str,
                  "price_series_json": _json_safe(price_series),
                  "chart_range": chart_range, "default_range": default_range,
                  "now": now, "report_price": _moved(report, now),
+                 "auto_refresh": needs_live_quote(now),
                  "ranges": RANGES,
                  "history_from": all_bars[0][0] if all_bars else None},
+    )
+
+
+def quote_provider(settings):
+    """Provider for on-page live quotes (tests override this, like
+    ``routes_portfolio.order_provider``)."""
+    return build_provider(settings)
+
+
+@router.get("/research/{symbol}/price")
+def live_price(request: Request, symbol: str, force: int = 0):
+    """The stock page's price block, with a live quote fetched first when the
+    stored price is stale (or ``force=1`` from the refresh button).  The quote
+    is stored, so every page - and "Last price" in the lists - sees it."""
+    error = None
+    with session_scope() as session:
+        ticker = session.scalar(select(Ticker).where(Ticker.symbol == symbol.upper()))
+        if ticker is None:
+            return HTMLResponse("", status_code=404)
+        now = price_now(session, ticker.id)
+        if force or needs_live_quote(now):
+            try:
+                stats, quote = ingest_quote(session, quote_provider(get_settings()),
+                                            ticker.symbol,
+                                            asset_class=ticker.asset_class or "stock")
+                session.commit()
+                if quote is None:
+                    error = "; ".join(stats.notes) or "no quote"
+            except Exception as exc:  # a provider hiccup must not break the page
+                session.rollback()
+                error = type(exc).__name__
+            now = price_now(session, ticker.id)
+        report = session.scalars(
+            select(ResearchReport).where(ResearchReport.ticker_id == ticker.id)
+            .order_by(ResearchReport.id.desc()).limit(1)).first()
+        moved = _moved(report, now)
+    return templates.TemplateResponse(
+        request=request, name="partials/price_now.html",
+        context={"ticker": ticker, "now": now, "report_price": moved,
+                 "auto_refresh": False, "quote_error": error},
     )
 
 

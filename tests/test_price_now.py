@@ -95,3 +95,73 @@ def test_research_lists_show_last_price(client):
     assert "Last price" in latest and "173.73" in latest and "+2.9%" in latest
     search = client.get("/research?q=NVDA").text
     assert "173.73" in search[search.index("Stocks matching"):]
+
+
+# ------------------------------------------------- staleness + live refresh
+
+from app.providers.base import Quote  # noqa: E402
+from app.web.display import NEW_YORK, needs_live_quote  # noqa: E402
+from tests.conftest import FakeProvider  # noqa: E402
+
+
+def _at(day: dt.date, hh: int, mm: int = 0) -> dt.datetime:
+    return dt.datetime(day.year, day.month, day.day, hh, mm, tzinfo=NEW_YORK)
+
+
+def _pn(day, *, live, fetched):
+    return PriceNow(price=D("1"), date=day, live=live, previous_close=None, fetched_at=fetched)
+
+
+def test_needs_live_quote_while_the_market_is_open():
+    thu = NOV12  # a Thursday
+    assert needs_live_quote(None, _at(thu, 11))
+    assert needs_live_quote(_pn(NOV11, live=False, fetched=_at(NOV11, 17)), _at(thu, 11))
+    assert not needs_live_quote(_pn(thu, live=True, fetched=_at(thu, 10, 50)), _at(thu, 11))
+    assert needs_live_quote(_pn(thu, live=True, fetched=_at(thu, 10, 40)), _at(thu, 11))
+
+
+def test_needs_live_quote_when_closed():
+    thu, fri, sat = NOV12, dt.date(2026, 11, 13), dt.date(2026, 11, 14)
+    settled_fri = _pn(fri, live=False, fetched=_at(fri, 18))
+    assert not needs_live_quote(settled_fri, _at(sat, 12))         # weekend, have Friday
+    assert needs_live_quote(_pn(thu, live=False, fetched=None), _at(sat, 12))  # missing Fri
+    intraday_fri = _pn(fri, live=True, fetched=_at(fri, 14))
+    assert needs_live_quote(intraday_fri, _at(sat, 12))            # want Friday's close
+    assert not needs_live_quote(_pn(fri, live=True, fetched=_at(fri, 16, 5)), _at(sat, 12))
+    # Pre-market Friday: Thursday's close is the latest finished session.
+    assert not needs_live_quote(_pn(thu, live=False, fetched=_at(thu, 17)), _at(fri, 8))
+    # After Thursday's close, a 15:00 quote is not the close yet.
+    assert needs_live_quote(_pn(thu, live=True, fetched=_at(thu, 15)), _at(thu, 17))
+
+
+def _quote(price: str) -> Quote:
+    return Quote(symbol="NVDA", price=D(price), source="fake",
+                 as_of=dt.datetime(2026, 11, 12, 15, 47, tzinfo=dt.timezone.utc))
+
+
+def test_stale_page_asks_for_a_live_price(client, monkeypatch):
+    _seed()  # newest stored price: Nov 11 close - stale on any later day
+    monkeypatch.setattr("app.web.routes_research.needs_live_quote", lambda now, at=None: True)
+    html = client.get("/research/NVDA").text
+    assert 'hx-get="/research/NVDA/price" hx-trigger="load"' in html and "updating…" in html
+
+
+def test_price_endpoint_fetches_stores_and_never_loops(client, monkeypatch):
+    _seed()
+    monkeypatch.setattr("app.web.routes_research.quote_provider",
+                        lambda settings: FakeProvider(quote=_quote("164.42")))
+    block = client.get("/research/NVDA/price?force=1").text
+    assert "164.42" in block and "-9.31" in block  # vs the Nov 11 close 173.73
+    assert 'hx-trigger="load"' not in block and "↻ refresh" in block
+    # Stored: the full page and the research list now show it too.
+    assert "164.42" in client.get("/research/NVDA").text
+    assert "164.42" in client.get("/research").text
+
+
+def test_quote_failure_keeps_the_stored_price(client, monkeypatch):
+    _seed()
+    monkeypatch.setattr("app.web.routes_research.quote_provider",
+                        lambda settings: FakeProvider(fail={"quote"}))
+    block = client.get("/research/NVDA/price?force=1").text
+    assert "173.73" in block and "Couldn't fetch a live quote" in block
+    assert client.get("/research/NOPE/price").status_code == 404
