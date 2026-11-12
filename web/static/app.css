@@ -85,6 +85,9 @@ footer { color: var(--muted); font-size: .8rem; padding: 1rem 1.25rem; border-to
 .kpi small { display: block; font-size: .75rem; color: var(--muted); font-weight: 400; }
 .job-result { background: var(--panel); border: 1px solid var(--line); border-radius: 8px;
   margin: .75rem 1.25rem; padding: .75rem 1rem; font-size: .9rem; }
+/* Chart range buttons on a stock's page: compact, wrap on phones. */
+.range-picker { display: flex; gap: .35rem; flex-wrap: wrap; margin: 0 0 .4rem; }
+.range-picker .btn { padding: .2rem .6rem; font-size: .8rem; min-height: 0; }
 /* Shown only while its HTMX request runs (htmx adds .htmx-request). */
 .htmx-indicator { display: none; }
 .htmx-request .htmx-indicator, .htmx-request.htmx-indicator { display: inline; }
@@ -127,6 +130,7 @@ input, select, textarea { max-width: 100%; }
   /* Touch-sized controls; 16px text stops iOS zooming into fields. */
   .btn { min-height: 40px; }
   .row-actions .btn { min-height: 36px; }
+  .range-picker .btn { min-height: 34px; display: inline-flex; align-items: center; }
   input, select, textarea { font-size: 16px; min-height: 40px; }
   input[type="checkbox"], input[type="radio"] { min-height: 0; width: 1.2rem; height: 1.2rem; }
   form.inline { align-items: stretch; }

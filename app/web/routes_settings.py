@@ -20,6 +20,7 @@ from app.research.llm import (
 from app.research import scan as scan_config
 from app.research.scoring import DEFAULT_WEIGHTS, ensure_default_weights
 from app.web.common import DISCLAIMER, templates
+from app.web.display import RANGES, load_default_range, save_default_range
 
 router = APIRouter()
 
@@ -47,12 +48,13 @@ def settings_page(request: Request, pw: str = ""):
         auto = autorefresh.load_config(session)
         scan = scan_config.load_scan_config(session, settings)
         universe = scan_config.universe_info(session)
+        chart_range = load_default_range(session)
     return templates.TemplateResponse(
         request=request, name="settings.html",
         context={"disclaimer": DISCLAIMER, "weights": weights,
                  "app_settings": app_settings, "settings": settings,
                  "has_orders": has_orders, "llm": llm, "scan": scan, "universe": universe,
-                 "auto": auto,
+                 "auto": auto, "chart_range": chart_range, "ranges": RANGES,
                  "auto_next": {m: autorefresh.next_run_at(m) for m in autorefresh.MODES},
                  "auto_live": autorefresh.scheduler_running(),
                  "auto_presets": autorefresh.PRESETS,
@@ -204,3 +206,14 @@ async def test_llm(request: Request):
             client.close()
     return templates.TemplateResponse(request=request, name="partials/llm_test.html",
                                       context=context)
+
+
+@router.post("/settings/display")
+def save_display(chart_default_range: str = Form("")):
+    """Global default chart range; each stock page can still override it
+    for one view with ``?range=``."""
+    with session_scope() as session:
+        save_default_range(session, chart_default_range)
+        session.commit()
+    return RedirectResponse("/settings#display", status_code=303)
+

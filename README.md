@@ -138,6 +138,15 @@ by sector, size band (small < $2B, mid, large ≥ $10B), held, and shortlist.
 fundamentals per night, all without a restart. `python -m app.cli scan
 --top 25` prints the ranking from stored data.
 
+### Chart range
+
+A stock's price chart opens at the **default range** from Settings → Display
+(1M, 3M, 6M, 1Y, 2Y, 3Y, 5Y or Max; 1Y out of the box). The range buttons
+on the stock's page (`?range=`) change that one view only; they are never
+saved, so the next stock you open starts at your default again. Ranges count
+back from the newest stored bar. Analysis always uses all stored history,
+whatever the chart shows.
+
 ### Emerging opportunities (early movers)
 
 The shortlist's composite score favours established, reasonably priced
@@ -394,7 +403,7 @@ pages — a call with an unfinished window is *not graded*, not "0".
 ## Tests
 
 ```
-make test   # 414 tests, <4s, no network
+make test   # 420 tests, <4s, no network
 ```
 
 Pinned invariants: P&L math (incl. shorts + borrow), scoring thresholds

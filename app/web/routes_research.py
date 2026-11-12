@@ -13,7 +13,7 @@ from __future__ import annotations
 import re
 from urllib.parse import quote
 
-from fastapi import APIRouter, Form, Request
+from fastapi import APIRouter, Form, Query, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
 from sqlalchemy import func, or_, select
 
@@ -25,6 +25,7 @@ from app.providers.registry import build_provider
 from app.research.llm_advisor import advisor_for
 from app.research.report import closes_with_dates
 from app.web.common import DISCLAIMER, _json_safe, templates
+from app.web.display import RANGES, load_default_range, slice_range, valid_range
 
 router = APIRouter()
 
@@ -93,7 +94,10 @@ def research_index(request: Request, q: str | None = None, err: str | None = Non
 
 
 @router.get("/research/{symbol}", response_class=HTMLResponse)
-def research_report(request: Request, symbol: str):
+def research_report(request: Request, symbol: str,
+                    range_: str | None = Query(None, alias="range")):
+    """One stock's report.  The chart opens at the global default range
+    (Settings -> Display); ``?range=`` overrides it for this view only."""
     with session_scope() as session:
         ticker = session.scalar(select(Ticker).where(Ticker.symbol == symbol.upper()))
     if ticker is None:
@@ -103,13 +107,19 @@ def research_report(request: Request, symbol: str):
             select(ResearchReport).where(ResearchReport.ticker_id == ticker.id)
             .order_by(ResearchReport.created_at.desc()).limit(1)
         ).first()
-        bars = closes_with_dates(session, ticker.id)[-500:]
+        default_range = load_default_range(session)
+        chart_range = valid_range(range_) or default_range
+        all_bars = closes_with_dates(session, ticker.id)
+        bars = slice_range(all_bars, chart_range)
         price_series = [{"date": d.isoformat(), "close": c} for d, c in bars]
     return templates.TemplateResponse(
         request=request, name="report.html",
         context={"disclaimer": DISCLAIMER, "ticker": ticker, "report": report,
                  "price_series": _json_safe(price_series),
-                 "price_series_json": _json_safe(price_series)},
+                 "price_series_json": _json_safe(price_series),
+                 "chart_range": chart_range, "default_range": default_range,
+                 "ranges": RANGES,
+                 "history_from": all_bars[0][0] if all_bars else None},
     )
 
 

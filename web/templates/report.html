@@ -14,7 +14,17 @@
 
 <div class="panels">
   <div class="panel" style="grid-column: 1 / -1">
-    <h3>Last 500 closes <span class="muted">(as of {{ report.data_as_of|as_of }})</span></h3>
+    <h3>Price history · {{ ranges[chart_range][0] }} <span class="muted">(as of {{ report.data_as_of|as_of }})</span></h3>
+    <nav class="range-picker" aria-label="chart range">
+      {% for key, (label, _) in ranges.items() %}
+      <a class="btn {{ '' if key == chart_range else 'secondary' }}" href="?range={{ key }}"
+         {% if key == chart_range %}aria-current="true"{% endif %}
+         title="{{ 'your default' if key == default_range else 'show ' ~ label }}">{{ label }}{% if key == default_range %} ★{% endif %}</a>
+      {% endfor %}
+    </nav>
+    <p class="muted" style="margin:0 0 .4rem">★ = your default (<a href="/settings#display">change</a>).
+      {% if history_from %}History stored from {{ history_from }}.{% endif %}
+      Analysis always uses all of it; this only changes the view.</p>
     <div class="chart"><canvas id="prices"></canvas></div>
   </div>
 </div>
@@ -99,7 +109,9 @@ new Chart(document.getElementById("prices"), {
   type: "line",
   data: { labels: series.map(p => p.date),
           datasets: [{ label: "{{ ticker.symbol }} close", data: series.map(p => p.close),
-                       borderColor: "#58a6ff", tension: .2 }] },
+                       borderColor: "#58a6ff", tension: .2,
+                       // dots only on short ranges; years of points smear the line
+                       pointRadius: series.length > 130 ? 0 : 2 }] },
   options: { maintainAspectRatio: false, plugins: { legend: { labels: { color: "#e6edf3" } } } },
 });
 </script>

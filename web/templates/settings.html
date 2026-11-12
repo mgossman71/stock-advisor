@@ -154,6 +154,21 @@
       (currently {{ env_summary.initial_cash_env }}).
       {% if has_orders %}It cannot be changed after trading has begun.{% endif %}</p>
   </div>
+  <div class="panel" id="display">
+    <h2>Display</h2>
+    <form method="post" action="/settings/display" class="inline">
+      <label>default chart range
+        <select name="chart_default_range">
+          {% for key, (label, _) in ranges.items() %}
+          <option value="{{ key }}" {{ 'selected' if key == chart_range }}>{{ label }}</option>
+          {% endfor %}
+        </select></label>
+      <button class="btn" type="submit">Save</button>
+    </form>
+    <p class="muted">How much price history a stock's chart shows when you open it. On a stock's
+      page the range buttons change that one view only; the next stock you open starts here
+      again. Analysis always uses all stored history, whatever the chart shows.</p>
+  </div>
   <div class="panel" id="password">
     <h2>Login password</h2>
     {% if pw_message %}<p class="{{ 'flash-ok' if pw_message[0] else 'flash-bad' }}">{{ pw_message[1] }}</p>{% endif %}
