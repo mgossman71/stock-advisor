@@ -3,15 +3,57 @@
 {% block title %}Research — Stock Advisor{% endblock %}
 {% block content %}
 <h1>Research</h1>
+{% if error %}<p class="flash-bad">{{ error }}</p>{% endif %}
 {% if not_found %}
-<p class="flash-bad">No ticker “{{ not_found }}” in the database. Run the job or fetch it first:
-<code>python -m app.cli fetch {{ not_found }}</code></p>
+<p class="muted">{{ not_found }} isn't tracked yet.</p>
 {% endif %}
 <form class="inline" method="get" action="/research">
-  <input name="q" placeholder="filter symbol…" value="{{ q or '' }}">
+  <input name="q" placeholder="symbol or company, e.g. TGT or Target" value="{{ q or '' }}">
   <button class="btn" type="submit">Search</button>
 </form>
+
+{% if can_add %}
 <div class="panel" style="margin-top:1rem">
+  <p>{{ can_add }} isn't in the app's stock list yet. Research it now: the app fetches its
+    prices, fundamentals and news, then builds a full report.</p>
+  <form hx-post="/research/{{ can_add }}/run">
+    <button class="btn" type="submit">Research {{ can_add }} now</button>
+    <span class="muted htmx-indicator">fetching and analysing… this can take a minute</span>
+  </form>
+</div>
+{% endif %}
+
+{% if q %}
+<div class="panel" style="margin-top:1rem">
+  <h2>Stocks matching “{{ q }}”</h2>
+  <table>
+    <tr><th>Ticker</th><th>Company</th><th>Latest report</th><th class="num">Score</th><th></th></tr>
+    {% for m in matches %}
+    <tr>
+      <td><a href="/research/{{ m.ticker.symbol }}">{{ m.ticker.symbol }}</a></td>
+      <td>{{ m.ticker.name or "—" }}</td>
+      {% if m.report %}
+      <td class="{{ m.report.overall_stance }}">{{ m.report.overall_stance }}
+        <span class="muted">{{ m.report.created_at|as_of }}</span></td>
+      <td class="num">{{ m.report.score }}</td>
+      {% else %}
+      <td class="muted">not researched yet</td><td class="num">—</td>
+      {% endif %}
+      <td>
+        <form hx-post="/research/{{ m.ticker.symbol }}/run" style="display:inline">
+          <button class="btn {{ 'secondary' if m.report else '' }}" type="submit">{{ "re-run" if m.report else "Research now" }}</button>
+        </form>
+      </td>
+    </tr>
+    {% else %}
+    <tr><td colspan="5" class="muted">No stored stock matches “{{ q }}”.</td></tr>
+    {% endfor %}
+  </table>
+</div>
+{% endif %}
+
+<div class="panel" style="margin-top:1rem">
+  <h2>Latest reports</h2>
   <table>
     <tr><th>Ticker</th><th>Stance</th><th class="num">Score</th>
         <th>Engine</th><th>Created</th><th>Data as of</th><th></th></tr>

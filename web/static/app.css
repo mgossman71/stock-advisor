@@ -85,6 +85,9 @@ footer { color: var(--muted); font-size: .8rem; padding: 1rem 1.25rem; border-to
 .kpi small { display: block; font-size: .75rem; color: var(--muted); font-weight: 400; }
 .job-result { background: var(--panel); border: 1px solid var(--line); border-radius: 8px;
   margin: .75rem 1.25rem; padding: .75rem 1rem; font-size: .9rem; }
+/* Shown only while its HTMX request runs (htmx adds .htmx-request). */
+.htmx-indicator { display: none; }
+.htmx-request .htmx-indicator, .htmx-request.htmx-indicator { display: inline; }
 .flash-ok { color: var(--green); } .flash-bad { color: var(--red); }
 .evidence li { margin-bottom: .25rem; }
 .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .85rem; }

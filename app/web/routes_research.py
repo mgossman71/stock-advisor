@@ -1,14 +1,25 @@
-"""Research pages: search, report view, run-new-research."""
+"""Research pages: search, report view, run-new-research.
+
+Search covers every stored ticker (symbol or company name), not just the
+ones with reports - the discovery funnel only reports on its shortlist, so
+most stocks have no report until you ask for one.  A valid symbol the app
+does not track yet can be researched from here too: ``run_research``
+fetches it first, and refuses to keep a ticker the providers know nothing
+about.
+"""
 
 from __future__ import annotations
 
+import re
+from urllib.parse import quote
+
 from fastapi import APIRouter, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
-from sqlalchemy import select
+from sqlalchemy import func, or_, select
 
 from app.config import get_settings
 from app.db.base import session_scope
-from app.db.models import ResearchReport, Ticker
+from app.db.models import PriceHistory, ResearchReport, Ticker
 from app.ingestion.ingest import refresh_symbol
 from app.providers.registry import build_provider
 from app.research.llm_advisor import advisor_for
@@ -18,34 +29,71 @@ from app.web.common import DISCLAIMER, _json_safe, templates
 router = APIRouter()
 
 
-@router.get("/research")
-def research_index(request: Request, q: str | None = None):
+#: Ticker symbols as the providers spell them: AAPL, BRK-B, ^GSPC, BF.B.
+SYMBOL_RE = re.compile(r"^\^?[A-Z][A-Z0-9.\-]{0,9}$")
+
+ERRORS = {
+    "nodata": "No price data found for {sym} - check the symbol (US listings only).",
+    "badsymbol": "“{sym}” isn't a valid ticker symbol.",
+}
+
+
+def _search(session, q: str) -> list[dict]:
+    """Tickers whose symbol starts with / name contains ``q``, exact match first,
+    each with its latest report (or None)."""
+    needle = q.strip()
+    rows = session.scalars(
+        select(Ticker).where(or_(Ticker.symbol.ilike(f"{needle}%"),
+                                 Ticker.name.ilike(f"%{needle}%")))
+        .order_by((Ticker.symbol == needle.upper()).desc(), Ticker.symbol).limit(25)
+    ).all()
+    matches = []
+    for ticker in rows:
+        report = session.scalars(
+            select(ResearchReport).where(ResearchReport.ticker_id == ticker.id)
+            .order_by(ResearchReport.created_at.desc()).limit(1)
+        ).first()
+        matches.append({"ticker": ticker, "report": report})
+    return matches
+
+
+def _research_page(request: Request, *, q: str | None = None, err: str | None = None,
+                   not_found: str | None = None, status_code: int = 200):
+    q = (q or "").strip() or None
     with session_scope() as session:
-        query = (
+        reports = (
             session.query(ResearchReport, Ticker.symbol)
             .join(Ticker, Ticker.id == ResearchReport.ticker_id)
             .order_by(ResearchReport.created_at.desc())
+            .limit(50).all()
         )
-        if q:
-            query = query.filter(Ticker.symbol.ilike(f"%{q.strip().upper()}%"))
-        reports = query.limit(50).all()
-        tickers = session.query(Ticker).order_by(Ticker.symbol).limit(600).all()
+        matches = _search(session, q) if q else []
+        for m in matches:  # touch lazy attrs inside the session
+            _ = (m["ticker"].symbol, m["ticker"].name)
+    candidate = (not_found or q or "").upper()
+    exact = any(m["ticker"].symbol == candidate for m in matches)
     return templates.TemplateResponse(
-        request=request, name="research.html",
-        context={"disclaimer": DISCLAIMER, "reports": reports, "tickers": tickers, "q": q},
+        request=request, name="research.html", status_code=status_code,
+        context={"disclaimer": DISCLAIMER, "reports": reports, "q": q,
+                 "matches": matches, "not_found": not_found,
+                 # Offer "research it now" for a plausible symbol we don't hold.
+                 "can_add": candidate if SYMBOL_RE.match(candidate) and not exact else None,
+                 "error": ERRORS[err].format(sym=candidate) if err in ERRORS else None},
     )
+
+
+@router.get("/research")
+def research_index(request: Request, q: str | None = None, err: str | None = None):
+    return _research_page(request, q=q, err=err)
 
 
 @router.get("/research/{symbol}", response_class=HTMLResponse)
 def research_report(request: Request, symbol: str):
     with session_scope() as session:
         ticker = session.scalar(select(Ticker).where(Ticker.symbol == symbol.upper()))
-        if ticker is None:
-            return templates.TemplateResponse(
-                request=request, name="research.html", status_code=404,
-                context={"disclaimer": DISCLAIMER, "reports": [], "tickers": [],
-                         "q": symbol, "not_found": symbol.upper()},
-            )
+    if ticker is None:
+        return _research_page(request, not_found=symbol.upper(), status_code=404)
+    with session_scope() as session:
         report = session.scalars(
             select(ResearchReport).where(ResearchReport.ticker_id == ticker.id)
             .order_by(ResearchReport.created_at.desc()).limit(1)
@@ -60,9 +108,22 @@ def research_report(request: Request, symbol: str):
     )
 
 
+def _hx_redirect(target: str) -> JSONResponse:
+    return JSONResponse({"HX-Redirect": target}, headers={"HX-Redirect": target})
+
+
 @router.post("/research/{symbol}/run")
-async def run_research(symbol: str, fetch: bool = Form(True)):
-    """Full pipeline for one ticker: fetch -> score -> recommend (HTMX button)."""
+def run_research(symbol: str, fetch: bool = Form(True)):
+    """Full pipeline for one ticker: fetch -> score -> recommend (HTMX button).
+
+    A sync ``def`` on purpose: FastAPI runs it in the thread pool, so a slow
+    fetch or LLM call doesn't freeze every other page (as ``async def`` with
+    blocking calls did).  Works for tickers not stored yet; if the providers
+    return no prices at all, nothing is kept.
+    """
+    symbol = symbol.strip().upper()
+    if not SYMBOL_RE.match(symbol):
+        return _hx_redirect(f"/research?q={quote(symbol)}&err=badsymbol")
     settings = get_settings()
     saved_symbol: str | None = None
     with session_scope() as session:
@@ -73,12 +134,18 @@ async def run_research(symbol: str, fetch: bool = Form(True)):
                 refresh_symbol(session, provider, symbol)
             except Exception:
                 pass  # score whatever we already have; the report flags staleness
+        has_prices = session.scalar(
+            select(func.count(PriceHistory.id)).join(Ticker, Ticker.id == PriceHistory.ticker_id)
+            .where(Ticker.symbol == symbol)
+        )
+        if not has_prices:
+            session.rollback()  # don't keep a ticker nobody has data for
+            return _hx_redirect(f"/research?q={quote(symbol)}&err=nodata")
         report = advisor.research(session, symbol)
         if report is not None:
             advisor.recommendations_for(session, report)
             saved_symbol = report.ticker.symbol
         session.commit()
     if saved_symbol is None:
-        return JSONResponse({"HX-Redirect": "/research"}, headers={"HX-Redirect": "/research"})
-    target = f"/research/{saved_symbol}"
-    return JSONResponse({"HX-Redirect": target}, headers={"HX-Redirect": target})
+        return _hx_redirect("/research")
+    return _hx_redirect(f"/research/{saved_symbol}")
