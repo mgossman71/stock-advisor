@@ -394,7 +394,7 @@ pages — a call with an unfinished window is *not graded*, not "0".
 ## Tests
 
 ```
-make test   # 413 tests, <4s, no network
+make test   # 414 tests, <4s, no network
 ```
 
 Pinned invariants: P&L math (incl. shorts + borrow), scoring thresholds

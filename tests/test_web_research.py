@@ -74,3 +74,18 @@ def test_invalid_symbol_is_refused_before_any_fetch(client, monkeypatch):
                         lambda settings: (_ for _ in ()).throw(AssertionError("fetched")))
     resp = client.post("/research/%3Cscript%3E/run")
     assert resp.headers["HX-Redirect"].endswith("err=badsymbol")
+
+
+def test_rerunning_research_lists_the_stock_once(client, monkeypatch):
+    monkeypatch.setattr("app.web.routes_research.build_provider",
+                        lambda settings: _provider_with_bars("TGT"))
+    client.post("/research/TGT/run")
+    client.post("/research/TGT/run")
+    with session_scope() as s:
+        ticker = s.query(Ticker).filter_by(symbol="TGT").one()
+        assert s.query(ResearchReport).filter_by(ticker_id=ticker.id).count() == 2
+        newest = max(r.id for r in s.query(ResearchReport).filter_by(ticker_id=ticker.id))
+    html = client.get("/research").text
+    latest = html[html.index("Latest reports"):]
+    assert latest.count('href="/research/TGT"') == 1
+    assert f'data-report="{newest}"' in latest

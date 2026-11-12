@@ -61,10 +61,15 @@ def _research_page(request: Request, *, q: str | None = None, err: str | None = 
                    not_found: str | None = None, status_code: int = 200):
     q = (q or "").strip() or None
     with session_scope() as session:
+        # One row per stock: its newest report (re-running research must not
+        # list the stock twice).  Highest id = newest, without timestamp ties.
+        newest = (select(func.max(ResearchReport.id).label("id"))
+                  .group_by(ResearchReport.ticker_id).subquery())
         reports = (
             session.query(ResearchReport, Ticker.symbol)
             .join(Ticker, Ticker.id == ResearchReport.ticker_id)
-            .order_by(ResearchReport.created_at.desc())
+            .join(newest, newest.c.id == ResearchReport.id)
+            .order_by(ResearchReport.created_at.desc(), ResearchReport.id.desc())
             .limit(50).all()
         )
         matches = _search(session, q) if q else []

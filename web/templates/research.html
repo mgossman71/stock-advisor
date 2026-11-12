@@ -58,7 +58,7 @@
     <tr><th>Ticker</th><th>Stance</th><th class="num">Score</th>
         <th>Engine</th><th>Created</th><th>Data as of</th><th></th></tr>
     {% for report, symbol in reports %}
-    <tr>
+    <tr data-report="{{ report.id }}">
       <td><a href="/research/{{ symbol }}">{{ symbol }}</a></td>
       <td class="{{ report.overall_stance }}">{{ report.overall_stance }}</td>
       <td class="num">{{ report.score }}</td>
