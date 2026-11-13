@@ -11,7 +11,8 @@ from sqlalchemy import select
 
 from app.config import get_settings
 from app.db.base import session_scope
-from app.db.models import CashAdjustment, DividendPayment, Order, Position, Ticker
+from app.db.models import (CashAdjustment, DividendPayment, Order, Position,
+                           Recommendation, Ticker)
 from app.providers.registry import build_provider
 from app.trading.accounts import CashAdjustmentError, adjust_cash, get_or_open_account
 from app.trading.freshness import ensure_fresh_price, last_session_date
@@ -38,6 +39,21 @@ def _positions_context(session, account):
     return positions
 
 
+def _position_calls(session, positions) -> dict[int, Recommendation]:
+    """ticker_id -> newest open call, for the stop/target columns on positions."""
+    ids = {p.ticker_id for p in positions}
+    if not ids:
+        return {}
+    calls: dict[int, Recommendation] = {}
+    for rec in session.scalars(
+        select(Recommendation)
+        .where(Recommendation.status == "open", Recommendation.ticker_id.in_(ids))
+        .order_by(Recommendation.generated_at.desc(), Recommendation.id.desc())
+    ):
+        calls.setdefault(rec.ticker_id, rec)  # newest-first: first sighting wins
+    return calls
+
+
 @router.get("/portfolio")
 def portfolio_page(request: Request, prefill: int | None = None):
     """`?prefill=<rec_id>` pre-fills the ticket from an open recommendation."""
@@ -53,10 +69,9 @@ def portfolio_page(request: Request, prefill: int | None = None):
         ).all()
         for o in orders:
             _ = o.ticker.symbol
+        calls = _position_calls(session, positions)
         prefill_data = None
         if prefill:
-            from app.db.models import Recommendation
-
             rec = session.get(Recommendation, prefill)
             if rec is not None and rec.status == "open":
                 side = "buy" if rec.direction == "long" else "short"
@@ -94,7 +109,7 @@ def portfolio_page(request: Request, prefill: int | None = None):
     return templates.TemplateResponse(
         request=request, name="portfolio.html",
         context={"disclaimer": DISCLAIMER, "account": account, "positions": positions,
-                 "values": values, "orders": orders, "prefill": prefill_data,
+                 "calls": calls, "values": values, "orders": orders, "prefill": prefill_data,
                  "realized": realized, "symbols": symbols, "closes": closes,
                  "settings": settings, "adjustments": adjustments,
                  "closes_asof": closes_asof, "dividends": dividends,

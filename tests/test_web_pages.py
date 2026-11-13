@@ -522,3 +522,16 @@ def test_dashboard_equity_chart_names_the_benchmark(client):
     html = client.get("/").text
     assert 'id="equity"' in html and "Not enough history yet" not in html
     assert "rebase(" in html and "y1" not in html
+
+
+def test_open_positions_show_the_open_calls_stop_and_target(client, monkeypatch):
+    """Positions carry the same stop/target the dashboard's Top ideas shows."""
+    _seed_open_calls()
+    _live_quote(monkeypatch, "PRC", "102.00")
+    client.post("/portfolio/order", data={"symbol": "PRC", "side": "buy", "qty": "6"})
+    html = client.get("/portfolio").text
+    positions = html.split("<h2>Open positions</h2>", 1)[1].split("</table>", 1)[0]
+    row = positions.split('<a href="/research/PRC">PRC</a>', 1)[1].split("</tr>", 1)[0]
+    assert "<th class=\"num\" title=\"from the newest open call on this ticker\">Target</th>" in positions
+    assert "125.00" in row and "90.00" in row
+    assert "call</span>" not in row  # call agrees with the position: no warning pill
