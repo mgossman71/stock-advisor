@@ -101,6 +101,10 @@ class FallbackProvider(MarketDataProvider):
         return self._resolve("quotes", f"{len(symbols)} symbols",
                              lambda p: p.get_quotes(symbols))
 
+    def get_intraday(self, symbol: str, *, period: str, interval: str) -> ProviderResult:
+        return self._resolve("intraday", symbol,
+                             lambda p: p.get_intraday(symbol, period=period, interval=interval))
+
     def get_fundamentals(self, symbol: str, *, asset_class: Side = "stock") -> ProviderResult:
         return self._resolve("fundamentals", symbol, lambda p: p.get_fundamentals(symbol, asset_class=asset_class))
 

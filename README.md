@@ -168,11 +168,14 @@ lists show the current price too.
 ### Chart range
 
 A stock's price chart opens at the **default range** from Settings → Display
-(1M, 3M, 6M, 1Y, 2Y, 3Y, 5Y or Max; 1Y out of the box). The range buttons
+(1D, 1W, 1M, 3M, 6M, 1Y, 2Y, 3Y, 5Y or Max; 1Y out of the box). The range buttons
 on the stock's page (`?range=`) change that one view only; they are never
 saved, so the next stock you open starts at your default again. Ranges count
-back from the newest stored bar. Analysis always uses all stored history,
-whatever the chart shows.
+back from the newest stored bar. 1D and 1W are drawn from live intraday
+bars (5-minute for the latest session, 30-minute for the last five) fetched
+when the chart opens and never stored; if that fetch fails the chart says so
+and shows the stored daily closes instead. Analysis always uses all stored
+history, whatever the chart shows.
 
 ### Emerging opportunities (early movers)
 

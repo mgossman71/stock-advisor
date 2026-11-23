@@ -29,6 +29,7 @@
     <p class="muted" style="margin:0 0 .4rem">★ = your default (<a href="/settings#display">change</a>).
       {% if history_from %}History stored from {{ history_from }}.{% endif %}
       Analysis always uses all of it; this only changes the view.</p>
+    {% if intraday_note %}<p class="muted" style="margin:0 0 .4rem">{{ ranges[chart_range][0] }}: {{ intraday_note }}.</p>{% endif %}
     <div class="chart"><canvas id="prices"></canvas></div>
   </div>
 </div>

@@ -46,6 +46,16 @@ class Bar:
 
 
 @dataclass(frozen=True)
+class IntradayBar:
+    """One intraday price point (display only - never stored)."""
+
+    symbol: str
+    at: dt.datetime
+    close: Decimal
+    source: str = "unknown"
+
+
+@dataclass(frozen=True)
 class Quote:
     """Latest price plus the timestamp the provider attached to it."""
 
@@ -218,6 +228,12 @@ class MarketDataProvider(ABC):
         priced; missing symbols are simply absent.  Unsupported by default."""
         return ProviderResult(self.name, f"quotes({len(symbols)})", ok=False,
                               error="unsupported")
+
+    def get_intraday(self, symbol: str, *, period: str, interval: str) -> ProviderResult:
+        """Intraday :class:`IntradayBar` rows for the short chart ranges, e.g.
+        ``period="1d", interval="5m"`` (the latest session).  Unsupported by
+        default."""
+        return ProviderResult(self.name, f"intraday({symbol})", ok=False, error="unsupported")
 
     def get_fundamentals(self, symbol: str, *, asset_class: Side = "stock") -> ProviderResult:
         """Fundamental/valuation snapshot.  Unsupported by default."""

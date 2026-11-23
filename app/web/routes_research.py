@@ -26,7 +26,7 @@ from app.research.llm_advisor import advisor_for
 from app.research.report import closes_with_dates
 from app.web.common import DISCLAIMER, _json_safe, templates
 from app.web.display import (
-    RANGES, load_default_range, needs_live_quote, price_now, report_price, slice_range,
+    INTRADAY, RANGES, load_default_range, needs_live_quote, price_now, report_price, slice_range,
     valid_range,
 )
 
@@ -119,6 +119,10 @@ def research_report(request: Request, symbol: str,
         all_bars = closes_with_dates(session, ticker.id)
         bars = slice_range(all_bars, chart_range)
         price_series = [{"date": d.isoformat(), "close": c} for d, c in bars]
+    intraday_note = None
+    if chart_range in INTRADAY:
+        intraday, intraday_note = _intraday_series(ticker.symbol, chart_range)
+        price_series = intraday or price_series
     return templates.TemplateResponse(
         request=request, name="report.html",
         context={"disclaimer": DISCLAIMER, "ticker": ticker, "report": report,
@@ -127,7 +131,7 @@ def research_report(request: Request, symbol: str,
                  "chart_range": chart_range, "default_range": default_range,
                  "now": now, "report_price": _moved(report, now),
                  "auto_refresh": needs_live_quote(now),
-                 "ranges": RANGES,
+                 "ranges": RANGES, "intraday_note": intraday_note,
                  "history_from": all_bars[0][0] if all_bars else None},
     )
 
@@ -136,6 +140,26 @@ def quote_provider(settings):
     """Provider for on-page live quotes (tests override this, like
     ``routes_portfolio.order_provider``)."""
     return build_provider(settings)
+
+
+def _intraday_series(symbol: str, chart_range: str) -> tuple[list[dict], str | None]:
+    """Live intraday points for 1D / 1W (display only, never stored), labelled
+    in New York time.  On failure: no points plus a note, and the caller
+    keeps the stored daily closes."""
+    period, interval = INTRADAY[chart_range]
+    try:
+        result = quote_provider(get_settings()).get_intraday(
+            symbol, period=period, interval=interval)
+    except Exception as exc:  # a provider hiccup must not break the page
+        result = None
+        error = f"{type(exc).__name__}: {exc}"
+    else:
+        error = result.error
+    if result is None or not result.ok:
+        return [], f"intraday prices unavailable ({error or 'no data'}) - showing daily closes"
+    label = "%H:%M" if chart_range == "1d" else "%a %H:%M"
+    points = [{"date": bar.at.strftime(label), "close": bar.close} for bar in result.data]
+    return _json_safe(points), f"{interval} bars, New York time, regular session"
 
 
 @router.get("/research/{symbol}/price")

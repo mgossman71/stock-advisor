@@ -20,9 +20,13 @@ from app.db.models import AppSetting, PriceHistory, ResearchReport
 
 #: key -> (button label, calendar days back from the newest bar; None = all).
 RANGES: dict[str, tuple[str, int | None]] = {
-    "1m": ("1M", 31), "3m": ("3M", 92), "6m": ("6M", 183), "1y": ("1Y", 365),
+    "1d": ("1D", 1), "1w": ("1W", 7), "1m": ("1M", 31), "3m": ("3M", 92), "6m": ("6M", 183), "1y": ("1Y", 365),
     "2y": ("2Y", 730), "3y": ("3Y", 1095), "5y": ("5Y", 1826), "max": ("Max", None),
 }
+#: Short ranges drawn from live intraday bars ((period, interval) for the
+#: provider), fetched when the chart opens and never stored.  If the fetch
+#: fails the chart falls back to the stored daily closes for that span.
+INTRADAY: dict[str, tuple[str, str]] = {"1d": ("1d", "5m"), "1w": ("5d", "30m")}
 DEFAULT_RANGE = "1y"
 SETTING_KEY = "chart_default_range"
 

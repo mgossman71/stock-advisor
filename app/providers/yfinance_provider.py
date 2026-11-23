@@ -18,7 +18,8 @@ import yfinance
 from app.config import Settings
 from app.ingestion.normalize import clean_text, parse_date, parse_datetime, percent_to_points, ratio, to_decimal, to_int
 from app.providers.base import (
-    AnalystAction, Bar, Dividend, EarningsEvent, FundamentalsSnapshot, MarketDataProvider,
+    AnalystAction, Bar, Dividend, EarningsEvent, FundamentalsSnapshot, IntradayBar,
+    MarketDataProvider,
     NewsHeadline, ProviderResult, Quote, Side,
 )
 from app.providers.throttle import (
@@ -217,6 +218,31 @@ class YFinanceProvider(MarketDataProvider):
             ))
         return ProviderResult(self.name, endpoint, ok=bool(quotes), data=tuple(quotes),
                               row_count=len(quotes), error=None if quotes else "no quotes")
+
+    def get_intraday(self, symbol: str, *, period: str, interval: str) -> ProviderResult:
+        """Regular-session bars (``prepost=False``), stamped in exchange time."""
+        endpoint = f"intraday({symbol})"
+
+        def fetch():
+            return self._ticker(symbol).history(period=period, interval=interval,
+                                                auto_adjust=False, actions=False,
+                                                prepost=False)
+
+        try:
+            frame = self._run(endpoint, fetch)
+        except (TransientProviderError, PermanentProviderError) as exc:
+            return ProviderResult(self.name, endpoint, ok=False, error=str(exc))
+        bars = []
+        for index, row in (frame.iterrows() if frame is not None else ()):
+            close = to_decimal(row.get("Close"))
+            at = parse_datetime(index)
+            if close is None or at is None:
+                continue
+            bars.append(IntradayBar(symbol=symbol.upper(), at=at.astimezone(_NEW_YORK),
+                                    close=close, source=self.name))
+        return ProviderResult(self.name, endpoint, ok=bool(bars), data=tuple(bars),
+                              row_count=len(bars), as_of=bars[-1].at if bars else None,
+                              error=None if bars else "empty")
 
     @staticmethod
     def _quote_timestamp(fast_info, frame) -> dt.datetime:
