@@ -535,3 +535,16 @@ def test_open_positions_show_the_open_calls_stop_and_target(client, monkeypatch)
     assert "<th class=\"num\" title=\"from the newest open call on this ticker\">Target</th>" in positions
     assert "125.00" in row and "90.00" in row
     assert "call</span>" not in row  # call agrees with the position: no warning pill
+
+
+def test_stock_page_has_a_way_back_on_phones(client):
+    """A home-screen web app has no browser back button: the stock page needs
+    its own Back link (a real href, so it works without JS), and the phone
+    header sticks so the Menu is reachable from anywhere on a long page."""
+    _seed_open_calls()
+    html = client.get("/research/PRC").text
+    assert '<a class="back-link" href="/" data-back>' in html
+    css = client.get("/static/app.css").text
+    phone = css[css.index("@media (max-width: 700px)"):]
+    assert re.search(r"\.topbar \{[^}]*position: sticky", phone)
+    assert "a[data-back]" in client.get("/static/app.js").text

@@ -20,6 +20,7 @@ main { padding: 1rem 1.25rem 2rem; max-width: 1200px; margin: 0 auto; }
 .topbar nav { display: flex; gap: .9rem; flex-wrap: wrap; }
 .topbar nav a { color: var(--muted); }
 .topbar nav a.active { color: var(--text); border-bottom: 2px solid var(--accent); }
+.back-link { display: inline-block; margin: .25rem 0 .25rem; color: var(--muted); }
 .disclaimer { background: #24210f; color: var(--amber); padding: .35rem 1.25rem;
   font-size: .85rem; border-bottom: 1px solid var(--line); }
 .badge { background: var(--red); color: #fff; border-radius: 9px; padding: 0 .45rem;
@@ -121,7 +122,11 @@ input, select, textarea { max-width: 100%; }
   footer { padding: .75rem; }
 
   /* Header: brand + Menu button; nav and actions open as a list. */
-  .topbar { padding: .5rem .75rem; gap: .5rem; }
+  /* Sticky, so the Menu (and the brand link home) stays reachable from the
+     bottom of a long page - a home-screen web app has no browser back. */
+  .topbar { padding: .5rem .75rem; gap: .5rem; position: sticky; top: 0; z-index: 10;
+    max-height: 100vh; overflow-y: auto; }
+  .back-link { padding: .4rem 0; }
   .menu-button { display: inline-flex; align-items: center; margin-left: auto;
     padding: .45rem .8rem; border: 1px solid var(--line); border-radius: 6px;
     cursor: pointer; user-select: none; }

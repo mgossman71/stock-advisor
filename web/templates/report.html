@@ -2,6 +2,9 @@
 {% set nav = "research" %}
 {% block title %}{{ ticker.symbol }} report — Stock Advisor{% endblock %}
 {% block content %}
+{# Home-screen web apps have no browser back button; the href works without
+   JS, app.js upgrades it to a real "back" when we came from this app. #}
+<a class="back-link" href="/" data-back>&larr; Back</a>
 <h1>{{ ticker.symbol }} <span class="muted">{{ ticker.name or "name unavailable" }}</span>
   {% if report %}<span class="pill {{ report.overall_stance }}">{{ report.overall_stance }}</span>
   <span class="kpi" style="font-size:1.2rem">{{ report.score|round(1) }}/100</span>{% endif %}</h1>

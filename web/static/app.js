@@ -41,3 +41,22 @@
     update();
   });
 })();
+
+/* "Back" links: plain hrefs (they work with no JS); when the previous page
+   was another page of this app, go back in history instead so scroll
+   position and filters survive.  Not when it was this same page (chart
+   range, re-run research) - that would just reload the stock. */
+(function () {
+  "use strict";
+  document.querySelectorAll("a[data-back]").forEach(function (a) {
+    a.addEventListener("click", function (ev) {
+      var ref;
+      try { ref = new URL(document.referrer); } catch (e) { return; }
+      if (ref.origin === location.origin && ref.pathname !== location.pathname &&
+          history.length > 1) {
+        ev.preventDefault();
+        history.back();
+      }
+    });
+  });
+})();
