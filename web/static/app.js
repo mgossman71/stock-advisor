@@ -42,17 +42,34 @@
   });
 })();
 
-/* "Back" links: plain hrefs (they work with no JS); when the previous page
-   was another page of this app, go back in history instead so scroll
-   position and filters survive.  Not when it was this same page (chart
-   range, re-run research) - that would just reload the stock. */
+/* "Back" links.  Every page without one (the lists: Research, Screen,
+   Dashboard...) records itself for this tab; a stock page's Back goes to
+   that page.  document.referrer was not reliable enough on phones (a
+   second stock opened from Research went "back" to the Dashboard), and
+   history.back() alone can't tell a chart-range change from a real
+   arrival.  The plain href "/" still works with no JS or storage. */
 (function () {
   "use strict";
-  document.querySelectorAll("a[data-back]").forEach(function (a) {
+  var KEY = "sa-back";
+  var links = document.querySelectorAll("a[data-back]");
+  var here = location.pathname + location.search;
+  if (!links.length) {
+    // pageshow also fires when a swipe-back restores the page from cache.
+    window.addEventListener("pageshow", function () {
+      try { sessionStorage.setItem(KEY, here); } catch (e) { /* private mode */ }
+    });
+    return;
+  }
+  var target = null;
+  try { target = sessionStorage.getItem(KEY); } catch (e) { /* use the href */ }
+  if (!target || target.charAt(0) !== "/" || target.charAt(1) === "/") return;
+  links.forEach(function (a) {
+    a.setAttribute("href", target);
     a.addEventListener("click", function (ev) {
+      // Came straight from that page: step back, keeping its scroll position.
       var ref;
       try { ref = new URL(document.referrer); } catch (e) { return; }
-      if (ref.origin === location.origin && ref.pathname !== location.pathname &&
+      if (ref.origin === location.origin && ref.pathname + ref.search === target &&
           history.length > 1) {
         ev.preventDefault();
         history.back();
