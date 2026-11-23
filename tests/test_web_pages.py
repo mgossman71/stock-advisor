@@ -522,6 +522,11 @@ def test_dashboard_equity_chart_names_the_benchmark(client):
     html = client.get("/").text
     assert 'id="equity"' in html and "Not enough history yet" not in html
     assert "rebase(" in html and "y1" not in html
+    # Inside <script> the name must be JSON, not HTML-escaped: the legend
+    # showed a literal "S&amp;P 500".
+    # (tojson writes "&" as \u0026, which JavaScript reads back as "&".)
+    script = html[html.index('getElementById("equity")'):html.index("</script>", html.index('getElementById("equity")'))]
+    assert 'label: "S\\u0026P 500"' in script and "&amp;" not in script
 
 
 def test_open_positions_show_the_open_calls_stop_and_target(client, monkeypatch):

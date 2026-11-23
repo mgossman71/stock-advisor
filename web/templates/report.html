@@ -113,7 +113,7 @@ const series = {{ price_series_json|tojson }};
 new Chart(document.getElementById("prices"), {
   type: "line",
   data: { labels: series.map(p => p.date),
-          datasets: [{ label: "{{ ticker.symbol }} close", data: series.map(p => p.close),
+          datasets: [{ label: {{ (ticker.symbol ~ " close")|tojson }}, data: series.map(p => p.close),
                        borderColor: "#58a6ff", tension: .2,
                        // dots only on short ranges; years of points smear the line
                        pointRadius: series.length > 130 ? 0 : 2 }] },

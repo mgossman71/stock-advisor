@@ -17,7 +17,7 @@
   </div>
   <div class="panel">
     {% set bench = settings.benchmark_symbol|index_name %}
-    <h2>Paper account vs {{ bench }} <span class="muted">% change since the first day</span></h2>
+    <h2>Paper account vs {{ bench }} <span class="muted sub">% change since the first day</span></h2>
     {% if curve|length >= 2 %}
     <div class="chart"><canvas id="equity"></canvas></div>
     {% else %}
@@ -190,7 +190,7 @@ new Chart(document.getElementById("equity"), {
   data: { labels: curve.map(p => p.date),
     datasets: [
       { label: "Paper account", data: rebase(totals), borderColor: "#58a6ff", tension: .25, spanGaps: true },
-      { label: "{{ settings.benchmark_symbol|index_name }}", data: rebase(spx),
+      { label: {{ settings.benchmark_symbol|index_name|tojson }}, data: rebase(spx),
         borderColor: "#8b949e", borderDash: [4,4], tension: .25, spanGaps: true },
     ] },
   options: { maintainAspectRatio: false,
